@@ -1,0 +1,20 @@
+# Core Web Framework & ASGI Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.9.0
+
+# Async HTTP Proxying (routes to whisper-server, llama-server, etc.)
+httpx>=0.27.0
+
+# File Uploads (strictly required if you enable POST /transcribe)
+python-multipart>=0.0.12
+
+# Configuration & Manifest Parsing
+pyyaml>=6.0.2
+python-dotenv>=1.0.1
+
+# System Monitoring & Lifecycle (CPU, RAM, disk, process state)
+psutil>=6.1.0
+
+# Auth & Token Handling (API key validation, secure header checks)
+cryptography>=43.0.0

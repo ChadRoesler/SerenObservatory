@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=70", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+# ── Project metadata ──────────────────────────────────────────────────────
+[project]
+name = "seren-agent"
+dynamic = ["version"]
+description = "Per-node management plane for the Seren cluster - manifest-driven service lifecycle, status, and orchestration."
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.10"
+keywords = ["seren", "jetson", "agent", "fastapi", "llm"]
+classifiers = [
+	"Development Status :: 4 - Beta",
+	"Environment :: No Input/Output (Daemon)",
+	"Framework :: FastAPI",
+	"Intended Audience :: Developers",
+	"Operating System :: POSIX :: Linux",
+	"Programming Language :: Python :: 3",
+	"Programming Language :: Python :: 3.10",
+	"Programming Language :: Python :: 3.11",
+	"Programming Language :: Python :: 3.12",
+	"Topic :: System :: Systems Administration",
+	"License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+]
+
+dependencies = [
+	"fastapi>=0.115.0",
+	"uvicorn[standard]>=0.32.0",
+	"pydantic>=2.9.0",
+	"httpx>=0.27.0",
+	"python-multipart>=0.0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+	"pytest>=8.0",
+	"pytest-asyncio>=0.24",
+	"httpx2>=0.28",   # Starlette TestClient's successor HTTP backend (Tom Christie / pydantic); silences the httpx-deprecation warning
+]
+
+[project.scripts]
+seren-agent = "seren_agent.app:main"
+
+[project.urls]
+Homepage = "https://github.com/ChadRoesler/SerenAgent"
+Repository = "https://github.com/ChadRoesler/SerenAgent"
+"Bug Tracker" = "https://github.com/ChadRoesler/SerenAgent/issues"
+
+# ── setuptools-scm: version from git tags ────────────────────────────────
+# Tags must be the form v1.2.3 on the repo root.
+# `python -m build` with no tags → 0.1.dev0+g<hash>.
+# SETUPTOOLS_SCM_PRETEND_VERSION overrides for local dev without tags.
+[tool.setuptools_scm]
+# Write version into the installed package so importlib.metadata works.
+# The file is gitignored - never commit it.
+version_file = "seren_agent/_version.py"
+# Strip the leading 'v' so "v1.2.3" → "1.2.3"
+tag_regex = "^v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+.*)$"
+# Used when no git tags exist (local dev, fresh clone, make test).
+# SETUPTOOLS_SCM_PRETEND_VERSION overrides this when set (CI release builds).
+fallback_version = "0.0.0.dev0"
+
+# ── Package discovery ────────────────────────────────────────────────────
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["seren_agent*"]
+
+# ── pytest ───────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

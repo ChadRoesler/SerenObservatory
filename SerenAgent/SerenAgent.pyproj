@@ -1,0 +1,111 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <PropertyGroup>
+    <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>{e20990c9-b0f0-46ff-9f69-6537d00b7fbf}</ProjectGuid>
+    <ProjectHome>.</ProjectHome>
+    <ProjectTypeGuids>{1b580a1a-fdb3-4b32-83e1-6407eb2722e6};{888888a0-9f3d-457c-b088-3a5042f75d52}</ProjectTypeGuids>
+    <StartupFile>seren_agent/app.py</StartupFile>
+    <WorkingDirectory>.</WorkingDirectory>
+    <OutputPath>dist\</OutputPath>
+    <Name>SerenAgent</Name>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="seren_agent\requirements.txt" />
+    <Compile Include="seren_agent\app.py" />
+    <Compile Include="seren_agent\auth.py" />
+    <Compile Include="seren_agent\lifecycle.py" />
+    <Compile Include="seren_agent\manifests.py" />
+    <Compile Include="seren_agent\request_log.py" />
+    <Compile Include="seren_agent\service_routes.py" />
+    <Compile Include="seren_agent\system_routes.py" />
+    <Compile Include="seren_agent\__init__.py" />
+    <Compile Include="seren_agent\services\comfy.py" />
+    <Compile Include="seren_agent\services\coral.py" />
+    <Compile Include="seren_agent\services\kokoro.py" />
+    <Compile Include="seren_agent\services\llama.py" />
+    <Compile Include="seren_agent\services\whisper.py" />
+    <Compile Include="seren_agent\services\__init__.py" />
+    <Compile Include="tests\conftest.py" />
+    <Compile Include="tests\test_app.py" />
+    <Compile Include="tests\test_auth.py" />
+    <Compile Include="tests\test_manifests.py" />
+    <Compile Include="tests\__init__.py" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="seren_agent\requirements.txt" />
+    <None Include="pyproject.toml" />
+    <None Include="README.md" Condition="Exists('README.md')" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="seren_agent\" />
+    <Folder Include="seren_agent\services\" />
+    <Folder Include="tests\" />
+    <Folder Include="tests\__pycache__\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="seren-agent.service.sample" />
+    <Content Include="seren-agent.yaml.sample" />
+    <Content Include="tests\__pycache__\conftest.cpython-311-pytest-9.0.3.pyc" />
+    <Content Include="tests\__pycache__\test_app.cpython-311-pytest-9.0.3.pyc" />
+    <Content Include="tests\__pycache__\test_auth.cpython-311-pytest-9.0.3.pyc" />
+    <Content Include="tests\__pycache__\test_manifests.cpython-311-pytest-9.0.3.pyc" />
+    <Content Include="tests\__pycache__\__init__.cpython-311.pyc" />
+  </ItemGroup>
+  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
+  <!--
+    Publish target: runs ONLY when you explicitly invoke it.
+      VS:        right-click project -> Publish (or build configuration set
+                 to invoke the Publish target via msbuild /t:Publish)
+      Command:   msbuild SerenAgent.pyproj /t:Publish /p:Configuration=Release
+
+    What it does:
+      1. Cleans __pycache__ from agent/ so they don't end up in the tarball
+      2. Runs `tar` (Windows 10+ ships bsdtar at C:\Windows\System32\tar.exe)
+         to create $(PublishTarball) with `agent/` at the top level — no
+         wrapping directory, no metadata files. This is exactly the layout
+         install_agent_common in seren-v5/common.sh expects.
+      3. Verifies the tarball contains agent/__init__.py at the top level
+         so a half-built artifact doesn't sneak through.
+
+    Why not AfterBuild: that fires on every build (including F5 to debug),
+    which would slow your edit-test loop and produce stale tarballs in
+    half-finished states. Publish is a deliberate "I'm ready to ship" step.
+  -->
+  <Target Name="Publish">
+    <Message Text="==&gt; Cleaning __pycache__ from seren_agent/" Importance="high" />
+    <ItemGroup>
+      <PycacheDirs Include="seren_agent\**\__pycache__\**" />
+    </ItemGroup>
+    <Delete Files="@(PycacheDirs)" />
+    <RemoveDir Directories="agent\__pycache__;agent\services\__pycache__" />
+    <Message Text="==&gt; Ensuring publish dir exists: $(SerenSetupDir)" Importance="high" />
+    <MakeDir Directories="$(SerenSetupDir)" Condition="!Exists('$(SerenSetupDir)')" />
+    <Message Text="==&gt; Building $(PublishTarball)" Importance="high" />
+    <!--
+      tar.exe (bsdtar on Win10+) syntax:
+        -c   create
+        -z   gzip
+        -f   output file
+      We tar from $(ProjectHome) so the path inside the archive is just
+      `seren_agent/...` with no leading directory.
+    -->
+    <Exec Command="tar -czf &quot;$(PublishTarball)&quot; seren-agent" WorkingDirectory="$(ProjectHome)" />
+    <Message Text="==&gt; Verifying tarball layout" Importance="high" />
+    <!--
+      Verify seren_agent/__init__.py is present (correct package layout).
+      Verify seren_agent/requirements.txt is present so nodes always have it
+      available for pip install -r after extract.
+    -->
+    <Exec Command="tar -tzf &quot;$(PublishTarball)&quot; | findstr /B /L &quot;seren_agent/__init__.py&quot; &gt; nul" WorkingDirectory="$(ProjectHome)" />
+    <Exec Command="tar -tzf &quot;$(PublishTarball)&quot; | findstr /B /L &quot;seren_agent/requirements.txt&quot; &gt; nul" WorkingDirectory="$(ProjectHome)" />
+    <Message Text="==&gt; Published: $(PublishTarball)" Importance="high" />
+  </Target>
+</Project>

@@ -18,6 +18,7 @@
     <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="seren_agent\config.py" />
     <Compile Include="seren_agent\requirements.txt" />
     <Compile Include="seren_agent\app.py" />
     <Compile Include="seren_agent\auth.py" />
@@ -26,6 +27,7 @@
     <Compile Include="seren_agent\request_log.py" />
     <Compile Include="seren_agent\service_routes.py" />
     <Compile Include="seren_agent\system_routes.py" />
+    <Compile Include="seren_agent\_version.py" />
     <Compile Include="seren_agent\__init__.py" />
     <Compile Include="seren_agent\services\comfy.py" />
     <Compile Include="seren_agent\services\coral.py" />
@@ -33,9 +35,11 @@
     <Compile Include="seren_agent\services\llama.py" />
     <Compile Include="seren_agent\services\whisper.py" />
     <Compile Include="seren_agent\services\__init__.py" />
+    <Compile Include="seren_agent\__main__.py" />
     <Compile Include="tests\conftest.py" />
     <Compile Include="tests\test_app.py" />
     <Compile Include="tests\test_auth.py" />
+    <Compile Include="tests\test_config.py" />
     <Compile Include="tests\test_manifests.py" />
     <Compile Include="tests\__init__.py" />
   </ItemGroup>

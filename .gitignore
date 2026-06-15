@@ -453,3 +453,6 @@ htmlcov/
 
 # mypy
 .mypy_cache/
+
+seren-agent.yaml
+.seren/

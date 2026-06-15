@@ -3,9 +3,16 @@ seren-agent - main FastAPI app.
 
 Run with:
     seren-agent                          # via the installed console script
+    python -m seren_agent                # config-aware entry (--config/-c)
     python -m seren_agent.app            # directly from the source tree
+    uvicorn seren_agent.app:app          # ASGI server pointing at module app
 
-or via systemd / start_agent.sh. Listens on port 7777 by default.
+or via systemd / a launcher. Listens on 0.0.0.0:7777 by default.
+
+Config: host/port resolve via config.load_config() (defaults < yaml's server:
+block < env vars). The bearer token is loaded SEPARATELY from
+~/.seren/secrets.json by auth.load_token() - it's a safety interlock, not a
+config field. See config.py for why.
 """
 from __future__ import annotations
 
@@ -16,6 +23,7 @@ from fastapi.responses import HTMLResponse
 
 from . import __version__, manifests
 from .auth import BearerAuthMiddleware, load_token
+from .config import AgentConfig, load_config
 from .request_log import RequestLoggingMiddleware
 from .service_routes import register_all_services
 from .system_routes import router as system_router
@@ -34,7 +42,17 @@ try:
 except Exception:  # noqa: BLE001 - never let version lookup break startup
     APP_VERSION = "0+unknown"
 
-def create_app() -> FastAPI:
+
+def create_app(cfg: AgentConfig | None = None) -> FastAPI:
+    # cfg is accepted so the config-aware entry points (python -m seren_agent)
+    # can pass a resolved config. When called with no arg (e.g. the
+    # module-level `app` below, or `uvicorn seren_agent.app:app`), fall back to
+    # load_config() so behaviour is identical either way. cfg currently carries
+    # host/port; those are consumed by the caller that runs uvicorn, so the app
+    # body doesn't need them - but we resolve it anyway so a future need (e.g.
+    # surfacing the bind in the root page) has it on hand without another load.
+    cfg = cfg or load_config()
+
     app = FastAPI(
         title="seren-agent",
         version=__version__,
@@ -105,28 +123,34 @@ def create_app() -> FastAPI:
     return app
 
 
-# Module-level app for `uvicorn agent.app:app`
+# Module-level app for `uvicorn seren_agent.app:app`
 app = create_app()
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ.get("AGENT_PORT", "7777"))
-    host = os.environ.get("AGENT_HOST", "0.0.0.0")
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    # Direct `python -m seren_agent.app` path. Resolve config the same way the
+    # console script does so host/port behave identically. (`python -m
+    # seren_agent` -> __main__.py is the preferred, --config-aware entry.)
+    _cfg = load_config()
+    uvicorn.run(app, host=_cfg.host, port=_cfg.port, log_level="info")
 
 
 def main() -> None:
-    """Console-script entry point: `seren-agent` (declared in pyproject.toml)."""
+    """Console-script entry point: `seren-agent` (declared in pyproject.toml).
+
+    Resolves config (defaults < yaml < env) and runs uvicorn. The CLI --config
+    flag is handled by __main__.py (`python -m seren_agent`); the bare
+    console-script reads $SEREN_AGENT_CONFIG / the conventional path / defaults.
+    """
     import uvicorn
 
-    port = int(os.environ.get("AGENT_PORT", "7777"))
-    host = os.environ.get("AGENT_HOST", "0.0.0.0")
+    cfg = load_config()
     uvicorn.run(
         "seren_agent.app:app",
-        host=host,
-        port=port,
+        host=cfg.host,
+        port=cfg.port,
         log_level="info",
         reload=False,
     )

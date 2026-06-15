@@ -4,8 +4,6 @@
     <File Path="LICENSE" />
     <File Path="Makefile" />
     <File Path="README.md" />
-    <File Path="seren-agent-setup.ps1" />
-    <File Path="seren-agent-setup.sh" />
   </Folder>
   <Folder Name="/Solution Items/.github/" />
   <Folder Name="/Solution Items/.github/workflows/">

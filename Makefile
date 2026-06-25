@@ -3,13 +3,13 @@
 #
 # Targets:
 #   make test         - install dev extras and run pytest
-#   make build        - produce wheel + sdist in SerenAgent/dist/
+#   make build        - produce wheel + sdist in SerenObservatory/dist/
 #   make clean        - remove venv and dist artifacts
 
 SHELL        := pwsh.exe
 .SHELLFLAGS  := -NoProfile -NonInteractive -Command
 
-PKG_DIR    := SerenAgent
+PKG_DIR    := SerenObservatory
 VENV       := .venv
 
 .PHONY: test build clean
@@ -21,5 +21,5 @@ build:
 	python -m pip install build --quiet; python -m build $(PKG_DIR)/; exit $$LASTEXITCODE
 
 clean:
-	Remove-Item -Recurse -Force $(VENV), $(PKG_DIR)/dist, $(PKG_DIR)/seren_agent/_version.py -ErrorAction SilentlyContinue
+	Remove-Item -Recurse -Force $(VENV), $(PKG_DIR)/dist, $(PKG_DIR)/seren_observatory/_version.py -ErrorAction SilentlyContinue
 

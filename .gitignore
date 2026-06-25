@@ -439,7 +439,7 @@ build/
 .eggs/
 
 # setuptools-scm generated version file (never commit)
-seren_agent/_version.py
+seren_observatory/_version.py
 
 # virtual environments
 .venv/
@@ -454,5 +454,5 @@ htmlcov/
 # mypy
 .mypy_cache/
 
-seren-agent.yaml
+seren-observatory.yaml
 .seren/

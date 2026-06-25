@@ -9,9 +9,9 @@ updates:
     commit-message:
       prefix: "ci"
 
-  # Python deps for the agent package (pyproject lives in SerenAgent/).
+  # Python deps for the observatory package (pyproject lives in SerenObservatory/).
   - package-ecosystem: "pip"
-    directory: "/SerenAgent"
+    directory: "/SerenObservatory"
     schedule:
       interval: "weekly"
     commit-message:

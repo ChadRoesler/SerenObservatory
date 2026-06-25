@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse
 from . import __version__, manifests
 from .auth import BearerAuthMiddleware, load_token
 from .config import ObservatoryConfig, load_config
-from .request_log import RequestLoggingMiddleware
+from seren_sinew.request_log import RequestLoggingMiddleware
 from .service_routes import register_all_services
 from .system_routes import router as system_router
 
@@ -82,7 +82,11 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     # auth FIRST (will run inner) and logging SECOND (will run outer).
     token = load_token()
     app.add_middleware(BearerAuthMiddleware, expected_token=token)
-    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(
+        RequestLoggingMiddleware,
+        service_name="seren-observatory",
+        env_prefix="SEREN_AGENT",
+    )
 
     # Root info page - no service data, just links + auth status indicator
     @app.get("/", response_class=HTMLResponse)

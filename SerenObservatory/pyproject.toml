@@ -36,6 +36,11 @@ dependencies = [
 	# Meninges-resolved config token. No [keyring] extra: this service never
 	# writes secrets to the OS keychain.
 	"seren-meninges>=1.0.0,<2",
+	# Shared request logging - ONE copy across the family (SerenSinew),
+	# replacing the per-service request_log.py. env_prefix preserves
+	# Observatory's SEREN_AGENT_LOG_* contract; service_name resolves the
+	# log filename (-> observatory-requests.log).
+	"seren-sinew>=1.0.0,<2",
 ]
 
 [project.optional-dependencies]

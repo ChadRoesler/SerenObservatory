@@ -57,6 +57,7 @@
     <Folder Include="tests\" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="README.md" />
     <Content Include="seren-observatory.service.sample" />
     <Content Include="seren-observatory.yaml.sample" />
     <Content Include="seren_observatory\services\__pycache__\comfy.cpython-311.pyc" />

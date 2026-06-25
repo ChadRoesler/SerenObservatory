@@ -1,0 +1,33 @@
+# SerenMemory systemd unit (sample)
+#
+# Install:
+#   1. Edit __TARGET_USER__ and paths below
+#   2. sudo cp seren-observatory.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now seren-observatory
+#
+# Logs:  journalctl -u seren-observatory -f
+
+[Unit]
+Description=SerenObservatory - A monitoring observatory for LLMs and tools
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__TARGET_USER__
+WorkingDirectory=/home/__TARGET_USER__/seren-observatory
+
+# Use the venv's python. Adjust the venv path to wherever you installed.
+ExecStart=/home/__TARGET_USER__/seren-venvs/observatory/bin/python -m seren_observatory --config /home/__TARGET_USER__/seren-observatory/seren-observatory.yaml
+
+# Config can also come from env - uncomment + set as needed:
+# Environment=SEREN_AGENT_PORT=7777
+# Environment=SEREN_AGENT_MODEL_URL=http://localhost:8090/v1
+# Environment=SEREN_AGENT_BEARER_TOKEN=
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

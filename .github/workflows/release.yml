@@ -33,13 +33,13 @@ jobs:
 
       - name: Install package + dev extras
         run: pip install -e ".[dev]"
-        working-directory: SerenAgent
+        working-directory: SerenObservatory
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
 
       - name: Run tests
         run: python -m pytest tests/ -v
-        working-directory: SerenAgent
+        working-directory: SerenObservatory
 
 # ── Build + GitHub Release (tags only) ────────────────────────────────────
   build-and-release:
@@ -66,18 +66,18 @@ jobs:
         # No sed patching needed - __version__ is resolved at runtime via
         # importlib.metadata.
         run: python -m build
-        working-directory: SerenAgent
+        working-directory: SerenObservatory
 
       - name: Upload dist as artifact (handed to the publish job)
         uses: actions/upload-artifact@v4
         with:
-          name: seren-agent-dist
-          path: SerenAgent/dist/
+          name: seren-observatory-dist
+          path: SerenObservatory/dist/
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: SerenAgent/dist/*
+          files: SerenObservatory/dist/*
           generate_release_notes: true
 
 # ── PyPI publish (Trusted Publishing, tokenless) ──────────────────────────
@@ -87,14 +87,14 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/seren-agent
+      url: https://pypi.org/p/seren-observatory
     permissions:
       id-token: write   # MANDATORY for Trusted Publishing; job-level = least privilege
     steps:
       - name: Download the built dist
         uses: actions/download-artifact@v4
         with:
-          name: seren-agent-dist
+          name: seren-observatory-dist
           path: dist/
 
       - name: Publish to PyPI (tokenless)

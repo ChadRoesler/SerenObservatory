@@ -1,0 +1,22 @@
+# ═══════════════════════════════════════════════════════════════════════
+#  seren-observatory.yaml - config for SerenObservatory
+# ═══════════════════════════════════════════════════════════════════════
+#
+#  Copy to seren-observatory.yaml, edit, and run:
+#     python -m seren_observatory --config seren-observatory.yaml
+#
+#  Or just run with no config at all - the defaults below are baked in, so
+#  `python -m seren_observatory` works zero-config for a local dev spin.
+#
+#  Env vars override file values (handy for Docker/systemd):
+#     SEREN_AGENT_PORT, SEREN_AGENT_HOST, SEREN_AGENT_BEARER_TOKEN
+#
+# ═══════════════════════════════════════════════════════════════════════
+
+server:
+  host: 0.0.0.0
+  port: 7777
+  # Leave empty for no auth (trusted LAN / dev). Set a token to require
+  #   Authorization: Bearer <token>
+  # on every endpoint except / and /health.
+  bearer_token: ""

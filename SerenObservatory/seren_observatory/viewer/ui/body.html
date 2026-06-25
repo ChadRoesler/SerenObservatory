@@ -1,0 +1,29 @@
+<!-- Two .view panels the shell's showTab() toggles. System = node vitals +
+     node.json + thermal zones. Services = the roster table with lifecycle
+     controls + an on-demand log peek. #error-slot carries connect/auth errors
+     (e.g. a 401 prompting the token, surfaced by scripts.js). -->
+<div id="error-slot"></div>
+
+<section class="view" id="system">
+    <div class="stat-row" id="vitals"></div>
+    <div class="cols">
+        <div class="card">
+            <h3>Node</h3>
+            <div id="node-meta" class="meta-block"></div>
+        </div>
+        <div class="card">
+            <h3>Thermal</h3>
+            <div id="thermal-body"></div>
+        </div>
+    </div>
+</section>
+
+<section class="view" id="services">
+    <div class="toolbar">
+        <span class="hint" id="svc-hint">service roster · status probed live</span>
+        <div class="spacer"></div>
+        <span class="hint" id="auth-note"></span>
+    </div>
+    <div id="svc-table"></div>
+    <pre id="logbox" class="logbox" style="display:none;"></pre>
+</section>

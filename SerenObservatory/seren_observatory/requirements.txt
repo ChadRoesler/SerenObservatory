@@ -14,7 +14,7 @@ pyyaml>=6.0.2
 python-dotenv>=1.0.1
 
 # System Monitoring & Lifecycle (CPU, RAM, disk, process state)
-psutil>=6.1.0
+psutil>=7.2.2
 
 # Auth & Token Handling (API key validation, secure header checks)
 cryptography>=43.0.0

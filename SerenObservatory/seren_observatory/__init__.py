@@ -14,10 +14,6 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__: str = version("seren-observatory")
-except PackageNotFoundError:
-    # Running from a source checkout without an editable install.
-    # Set SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 and run:
-    #   pip install -e ".[dev]"
-    # to resolve this.
-    __version__ = "0.0.0.dev"
+    from ._version import version as __version__
+except Exception:  # noqa: BLE001 - source checkout without a build
+    __version__ = "0.0.0+unknown"

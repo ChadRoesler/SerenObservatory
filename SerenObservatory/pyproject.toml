@@ -58,19 +58,15 @@ Homepage = "https://github.com/ChadRoesler/SerenObservatory"
 Repository = "https://github.com/ChadRoesler/SerenObservatory"
 "Bug Tracker" = "https://github.com/ChadRoesler/SerenObservatory/issues"
 
-# ── setuptools-scm: version from git tags ────────────────────────────────
-# Tags must be the form v1.2.3 on the repo root.
-# `python -m build` with no tags → 0.1.dev0+g<hash>.
-# SETUPTOOLS_SCM_PRETEND_VERSION overrides for local dev without tags.
 [tool.setuptools_scm]
-# Write version into the installed package so importlib.metadata works.
-# The file is gitignored - never commit it.
-version_file = "seren_observatory/_version.py"
-# Strip the leading 'v' so "v1.2.3" → "1.2.3"
-tag_regex = "^v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+.*)$"
-# Used when no git tags exist (local dev, fresh clone, make test).
-# SETUPTOOLS_SCM_PRETEND_VERSION overrides this when set (CI release builds).
-fallback_version = "0.0.0.dev0"
+# .git is one level above pyproject.toml (repo root, not the SerenMemory subdir)
+root = ".."
+version_scheme = "release-branch-semver"
+# Write the tag-derived version into the package (shipped in the wheel, read
+# by __init__ / importlib.metadata). Replaces the old sed-on-__init__ hack -
+# version now flows from the git tag with no manual step. _version.py is
+# gitignored; it's a build artifact, never committed.
+version_file = "seren_memory/_version.py"
 
 # ── Package discovery ────────────────────────────────────────────────────
 [tool.setuptools.packages.find]

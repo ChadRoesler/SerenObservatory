@@ -10,6 +10,7 @@
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>dist\</OutputPath>
     <Name>SerenObservatory</Name>
+    <TestFramework>Pytest</TestFramework>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>

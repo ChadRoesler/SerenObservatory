@@ -83,7 +83,7 @@
     What it does:
       1. Cleans __pycache__ from observatory/ so they don't end up in the tarball
       2. Runs `tar` (Windows 10+ ships bsdtar at C:\Windows\System32\tar.exe)
-         to create $(PublishTarball) with `observatory/` at the top level — no
+         to create $(PublishTarball) with `observatory/` at the top level - no
          wrapping directory, no metadata files. This is exactly the layout
          install_observatory_common in seren-v5/common.sh expects.
       3. Verifies the tarball contains observatory/__init__.py at the top level

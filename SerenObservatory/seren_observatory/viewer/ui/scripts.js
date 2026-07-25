@@ -1,4 +1,4 @@
-// ── SerenObservatory glance — leaf logic on the SerenMeninges shell ──────────
+// ── SerenObservatory glance - leaf logic on the SerenMeninges shell ──────────
 // The shell provides api() (same-origin, auto-attaches the saved bearer),
 // escapeHtml(), showTab(), getToken(), and the 🔑 token modal. We call them.
 //
@@ -23,14 +23,14 @@ function showError(html) { $('error-slot').innerHTML = `<div class="err">${html}
 function clearError() { $('error-slot').innerHTML = ''; }
 
 function tokenHint(code) {
-    if (code === 401) return `⚠ <b>Token required.</b> This node has auth on — set your observatory token via <b>🔑 Token</b> to see live data.`;
+    if (code === 401) return `⚠ <b>Token required.</b> This node has auth on - set your observatory token via <b>🔑 Token</b> to see live data.`;
     if (code === 503) return `⚠ <b>No token provisioned on this node.</b> The read-only glance works; lifecycle actions stay disabled until <code>~/.seren/secrets.json</code> exists (run <code>seren-secrets.sh</code>).`;
     return '';
 }
 
 // -- formatters ----------------------------------------------------------
 function fmtUptime(s) {
-    if (s == null) return '—';
+    if (s == null) return '-';
     s = Math.floor(s);
     const d = Math.floor(s / 86400); s -= d * 86400;
     const h = Math.floor(s / 3600); s -= h * 3600;
@@ -52,7 +52,7 @@ function renderNodePill(node) {
 }
 function renderHealthPill(health) {
     const pill = $('health-pill');
-    if (!health) { pill.textContent = '—'; pill.classList.remove('hot'); return; }
+    if (!health) { pill.textContent = '-'; pill.classList.remove('hot'); return; }
     const ok = !!health.ok;
     pill.textContent = `${ok ? 'healthy' : 'degraded'} ${health.healthy}/${health.total}`;
     pill.classList.toggle('hot', !ok);   // .head-pill.hot is the shell's alert variant
@@ -67,11 +67,11 @@ function renderVitals(node, thermal, health) {
     const load1 = Array.isArray(rt.load_avg) ? rt.load_avg[0] : null;
     const stat = (cls, big, lbl) => `<div class="stat ${cls}"><div class="big">${big}</div><div class="lbl">${lbl}</div></div>`;
     $('vitals').innerHTML = [
-        stat(statTemp(maxT), maxT != null ? `${maxT}°` : '—', 'max temp'),
-        stat(statMem(memP), memP != null ? `${memP}%` : '—', 'mem used'),
-        stat('', load1 != null ? load1.toFixed(2) : '—', 'load 1m'),
+        stat(statTemp(maxT), maxT != null ? `${maxT}°` : '-', 'max temp'),
+        stat(statMem(memP), memP != null ? `${memP}%` : '-', 'mem used'),
+        stat('', load1 != null ? load1.toFixed(2) : '-', 'load 1m'),
         stat('', fmtUptime(rt.uptime_seconds), 'uptime'),
-        stat(health ? (health.ok ? 'ok' : 'hot') : '', health ? `${health.healthy}/${health.total}` : '—', 'healthy'),
+        stat(health ? (health.ok ? 'ok' : 'hot') : '', health ? `${health.healthy}/${health.total}` : '-', 'healthy'),
     ].join('');
 }
 
@@ -119,7 +119,7 @@ function svcRow(name, entry) {
     const running = !!st.running;
     const ph = st.port_health;
 
-    let healthChip = `<span class="health-chip na">—</span>`;
+    let healthChip = `<span class="health-chip na">-</span>`;
     if (lib) healthChip = `<span class="health-chip na">n/a</span>`;
     else if (ph && ph.ok) healthChip = `<span class="health-chip up">up${ph.latency_ms != null ? ' ' + ph.latency_ms + 'ms' : ''}</span>`;
     else if (running && ph && !ph.ok) healthChip = `<span class="health-chip down">down</span>`;
@@ -137,8 +137,8 @@ function svcRow(name, entry) {
         <span class="nm">${escapeHtml(name)}</span>
         <span class="col"><span class="badge ${typeCls}">${escapeHtml(stype)}</span></span>
         <span class="col">${healthChip}</span>
-        <span class="col">${st.memory_mb != null ? st.memory_mb + ' MB' : '—'}</span>
-        <span class="col">${st.cpu_percent != null ? st.cpu_percent + '%' : '—'}</span>
+        <span class="col">${st.memory_mb != null ? st.memory_mb + ' MB' : '-'}</span>
+        <span class="col">${st.cpu_percent != null ? st.cpu_percent + '%' : '-'}</span>
         <span class="col">${fmtUptime(st.uptime_seconds)}</span>
         <span class="acts">${acts}<button class="btn-mini" onclick="svcLogs('${escapeHtml(name)}')" title="logs">📄</button></span>
     </div>`;
@@ -177,13 +177,13 @@ async function svcLogs(name) {
         const lines = (data && data.lines) || [];
         box.textContent = lines.length ? lines.join('\n') : `(no log lines for ${name})`;
     } catch (e) {
-        box.textContent = statusOf(e) === 401 ? 'Token required — set it via 🔑 Token.' : `failed to load logs: ${e.message}`;
+        box.textContent = statusOf(e) === 401 ? 'Token required - set it via 🔑 Token.' : `failed to load logs: ${e.message}`;
     }
 }
 
 function updateAuthNote() {
     const note = $('auth-note');
-    if (_noToken) { note.innerHTML = 'actions disabled — no token on this node'; note.className = 'hint warn'; }
+    if (_noToken) { note.innerHTML = 'actions disabled - no token on this node'; note.className = 'hint warn'; }
     else { note.textContent = 'actions use your 🔑 token'; note.className = 'hint'; }
 }
 

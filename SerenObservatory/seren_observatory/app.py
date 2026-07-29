@@ -130,7 +130,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
             title="seren-observatory",
             brand="Seren<b>Observatory</b>",
             subtitle=f"v{APP_VERSION} · per-node watch plane",
-            accent="#6eff70",
+            accent="#f59056",
         )
 
     # System routes (ping, version, node, services, health, reclaim)

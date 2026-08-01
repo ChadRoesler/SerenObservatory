@@ -50,6 +50,9 @@
     <None Include="README.md" Condition="Exists('README.md')" />
   </ItemGroup>
   <ItemGroup>
+    <Folder Include="examples\" />
+    <Folder Include="examples\seren\" />
+    <Folder Include="examples\seren\services\" />
     <Folder Include="seren_observatory\" />
     <Folder Include="seren_observatory\services\" />
     <Folder Include="seren_observatory\services\__pycache__\" />
@@ -58,6 +61,12 @@
     <Folder Include="tests\" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="examples\seren\node.json" />
+    <Content Include="examples\seren\README.md" />
+    <Content Include="examples\seren\services\coral.json" />
+    <Content Include="examples\seren\services\llama.json" />
+    <Content Include="examples\seren\services\searxng.json" />
+    <Content Include="examples\seren\services\seren-memory.json" />
     <Content Include="README.md" />
     <Content Include="seren-observatory.service.sample" />
     <Content Include="seren-observatory.yaml.sample" />

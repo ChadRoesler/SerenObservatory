@@ -1,0 +1,13 @@
+{
+  "hostname": "node-c",
+  "ip_addresses": ["192.0.2.101"],
+  "platform": "xavier",
+  "jetpack_release": "R35",
+  "cuda_arch": "72",
+  "cuda_version": "11.4",
+  "unified_memory_gb": 31,
+  "cpu_cores": 8,
+  "installed_at": "2026-07-30T21:14:02Z",
+  "schema_version": 1,
+  "nodeSpecific": {}
+}

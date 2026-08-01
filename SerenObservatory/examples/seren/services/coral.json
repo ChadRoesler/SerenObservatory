@@ -1,0 +1,13 @@
+{
+  "service": "coral",
+  "implementation": "pycoral",
+  "port": 0,
+  "service_type": "library",
+  "venv_path": "/mnt/nvme/seren-venvs/coral",
+  "installed_at": "2026-07-30T21:14:02Z",
+  "schema_version": 2,
+  "serviceSpecific": {
+    "device": "pcie",
+    "gasket_module": "apex"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "service": "llama",
+  "implementation": "llama.cpp",
+  "port": 8090,
+  "endpoint": "/v1/chat/completions",
+  "start_script": "/home/jetson/start_llama.sh",
+  "stop_script": "/home/jetson/stop_llama.sh",
+  "pid_path": "/home/jetson/seren-logs/llama.pid",
+  "log_path": "/home/jetson/seren-logs/llama.log",
+  "venv_path": "/mnt/nvme/seren-venvs/llama",
+  "installed_at": "2026-07-30T21:14:02Z",
+  "schema_version": 1,
+  "serviceSpecific": {
+    "model": "qwen2.5-9b-instruct-q8_0.gguf",
+    "context_size": 8192,
+    "parallel": 1
+  }
+}

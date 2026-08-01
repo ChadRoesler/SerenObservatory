@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "service": "searxng",
+  "service_type": "docker_compose",
+  "compose_file": "/home/{youruser}/searxng/docker-compose.yaml",
+  "compose_service": "searxng",
+  "port": 8080,
+  "health_url": "http://127.0.0.1:8080/healthz",
+  "installed_at": "2026-07-30T21:14:02Z",
+  "serviceSpecific": {}
+}

@@ -306,7 +306,7 @@ async def reboot(body: dict | None = None) -> dict[str, Any]:
     -c` (or POST /reboot/cancel) if you fat-fingered the dashboard.
 
     Requires sudoers grant for /sbin/shutdown -r * - added by host-setup.sh
-    and seren-setup.sh's install_observatory_common. Existing installs need the
+    and seren-prepare-node.sh's install_observatory_common. Existing installs need the
     seren-sudoers-update.sh migration to add the new grant.
     """
     import datetime

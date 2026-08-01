@@ -1,0 +1,12 @@
+{
+  "schema_version": 2,
+  "service": "seren-memory",
+  "service_type": "systemd",
+  "systemd_unit": "seren-memory.service",
+  "port": 7420,
+  "description": "seren-memory - seren constellation service",
+  "config_path": "/home/{youruser}/seren-memory/seren-memory.yaml",
+  "app_dir": "/home/{youruser}/seren-memory",
+  "health_url": "http://127.0.0.1:7420/health",
+  "installed_by": "setup-seren-service.sh"
+}

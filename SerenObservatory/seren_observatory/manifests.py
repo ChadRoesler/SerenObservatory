@@ -1,8 +1,15 @@
 """
 ~/.seren/{node,services/*}.json loader.
 
-Single source of truth for "what's installed on this Jetson." Replaces
-hardcoded SERVICES dict and directory probing.
+Single source of truth for "what's installed on this NODE" — Jetson, Spark,
+NUC or anything else running an Observatory. Replaces the hardcoded SERVICES
+dict and directory probing.
+
+IF A SERVICE ISN'T LISTED, IT HAS NO MANIFEST. That is the whole diagnostic.
+Observatory reports these files and nothing else, so a node can be running
+six healthy services and look empty. setup-seren-service.sh writes one per
+install; seren-register-services.sh backfills anything installed before it
+did.
 
 The loader is read-only and cheap - call it on every request rather than
 caching, so installing/wiping a service shows up in the API immediately
@@ -27,7 +34,13 @@ operations to the right handler:
     systemd         - Service is a systemd unit. Lifecycle = systemctl
                       start/stop/restart. Status from systemctl show.
                       Required manifest fields: systemd_unit, port (or 0).
-                      Used on the NUC for: runtimehost, mcp.
+                      Used on the NUC for every seren-* constellation
+                      service: lodestar, workbench, memory, loci,
+                      corpus-callosum, margin. (These were named
+                      "runtimehost" and "mcp" before the rename; manifests
+                      are written by setup-seren-service.sh, which derives
+                      the unit name from the service it just installed, so
+                      there is no list here to drift.)
 
     docker_compose  - Service is a container in a compose stack. Lifecycle
                       = docker compose up/down/restart <svc>. Status from

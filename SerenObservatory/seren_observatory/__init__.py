@@ -1,10 +1,15 @@
 """
-seren-observatory - per-Jetson management plane.
+seren-observatory - per-node management plane.
+
+One runs on every node in the constellation - Jetson, Spark or NUC. The
+hardware is not special to anything above it; what matters is that something
+answers here.
 
 HTTP API exposing manifest-driven discovery and lifecycle of locally-installed
-Seren services (llama, kokoro, comfy, whisper, coral). Consumed by:
-    - SerenRuntimeHost (C#) for chat-app workflows
-    - SerenCommandCenter (SCC, future) for cluster orchestration
+Seren services (llama, kokoro, comfy, whisper, coral, and on a management node
+the seren-* constellation services themselves). Consumed by:
+    - SerenLodestar for cluster orchestration and chat-app workflows
+      (this was SerenRuntimeHost, in C#, before the rename and the port)
     - The NUC dashboard for monitoring
 
 Routes are versioned under /api/v1/. See service_routes.py and system_routes.py.

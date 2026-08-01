@@ -11,7 +11,7 @@ python-multipart>=0.0.12
 
 # Configuration & Manifest Parsing
 pyyaml>=6.0.2
-python-dotenv>=1.0.1
+python-dotenv>=1.2.2
 
 # System Monitoring & Lifecycle (CPU, RAM, disk, process state)
 psutil>=6.1.0

@@ -49,6 +49,15 @@ dev = [
 	"pytest-asyncio>=0.24",
 	"httpx2>=0.28",   # Starlette TestClient's successor HTTP backend (Tom Christie / pydantic); silences the httpx-deprecation warning
 ]
+# "is there a newer seren-lodestar" reporting on GET /. Opt-in, because a
+# service that never leaves a LAN has no reason to talk to PyPI. Pulls the
+# Meninges extra rather than httpx/packaging directly - the check lives in
+# seren_meninges.updates and only one repo should own that dep set.
+#
+# The floor matches the core dep above: updates.py landed in Meninges 2.0.0.
+# Resolve anything older and the lifespan import fails, leaving you with
+# status="unavailable" forever and no obvious reason why.
+updates = ["seren-meninges[updates]>=2.0.0,<3"]
 
 [project.scripts]
 seren-observatory = "seren_observatory.app:main"
@@ -66,7 +75,12 @@ version_scheme = "release-branch-semver"
 # by __init__ / importlib.metadata). Replaces the old sed-on-__init__ hack -
 # version now flows from the git tag with no manual step. _version.py is
 # gitignored; it's a build artifact, never committed.
-version_file = "seren_memory/_version.py"
+version_file = "seren_observatory/_version.py"
+# Strip the leading 'v' so "v1.2.3" → "1.2.3"
+tag_regex = "^v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+.*)$"
+# Used when no git tags exist (local dev, fresh clone). CI release builds
+# override with SETUPTOOLS_SCM_PRETEND_VERSION.
+fallback_version = "0.0.0.dev0"
 
 # ── Package discovery ────────────────────────────────────────────────────
 [tool.setuptools.packages.find]

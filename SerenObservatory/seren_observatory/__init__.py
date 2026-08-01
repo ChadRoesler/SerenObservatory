@@ -16,8 +16,9 @@ Routes are versioned under /api/v1/. See service_routes.py and system_routes.py.
 """
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version
-
+# Version flows from the git tag via setuptools-scm (written to _version.py at
+# build time, read here). Fallback only fires in a bare source checkout that was
+# never built. Mirrors SerenLoci/SCC so the family exposes __version__ alike.
 try:
     from ._version import version as __version__
 except Exception:  # noqa: BLE001 - source checkout without a build

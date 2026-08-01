@@ -17,7 +17,7 @@ config field. See config.py for why.
 from __future__ import annotations
 
 import os
-
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -39,7 +39,7 @@ from seren_meninges.viewer import render_from_dir
 # raises - the same one-liner the rest of the family uses, replacing the old
 # hand-rolled importlib.metadata block that drifted from the others.
 APP_VERSION = get_version("seren-observatory", fallback=__version__)
-
+log = logging.getLogger("seren_observatory")
 
 def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     # cfg is accepted so the config-aware entry points (python -m seren_observatory)
@@ -87,6 +87,36 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
         service_name="seren-observatory",
         env_prefix="SEREN_AGENT",
     )
+
+    # ── Update checker ─────────────────────────────────────────────
+    # "is there a newer seren-lodestar". Cosmetic: it polls on a TTL, never
+    # in the request path, and every failure mode is a status string rather
+    # than an exception.
+    #
+    # The try/except guards the IMPORT, because a Meninges older than the
+    # one that introduced updates.py has no such module. Note this gate is
+    # DELIBERATELY VISIBLE - app.state.updates stays None and the info route
+    # reports status="unavailable" with a reason. A silent fallback here
+    # would render as "you're up to date", which is the exact failure shape
+    # that let mcp 2.0.0 quietly delete every /mcp endpoint in the family.
+    try:
+        from seren_meninges.updates import UpdateChecker
+        app.state.updates = UpdateChecker(
+            "seren-observatory",
+            enabled=cfg.updates.enabled,
+            index_url=cfg.updates.index_url,
+            ttl_seconds=cfg.updates.check_interval_hours * 3600.0,
+            allow_prerelease=cfg.updates.allow_prerelease,
+            fallback_version=APP_VERSION,
+        )
+    # Catch EVERYTHING, not just ImportError. This whole feature is cosmetic -
+    # seren_meninges/version.py states the contract: a version read must never
+    # crash startup. A too-narrow catch here already bit us: cfg.updates was
+    # missing, the AttributeError sailed past `except ImportError`, and five
+    # services failed to boot on a feature that only draws a badge.
+    except Exception as exc:
+        app.state.updates = None
+        log.info("update checking unavailable (%s)", exc)
 
     # Root info page - no service data, just links + auth status indicator
     @app.get("/", response_class=HTMLResponse)

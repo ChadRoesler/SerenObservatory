@@ -34,13 +34,26 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 try:
     import yaml  # type: ignore[import-untyped]
     _HAS_YAML = True
 except ImportError:  # pragma: no cover - pyyaml is a hard dep, but be lenient
     _HAS_YAML = False
+
+
+class UpdatesConfig(BaseModel):
+    """\"Is there a newer seren-observatory\" checking. Cosmetic, opt-outable.
+
+    Needs seren-meninges[updates]. Without it the check reports
+    status="unavailable" rather than silently reading as "you're current" -
+    see seren_meninges/updates.py for why that distinction is load-bearing.
+    """
+    enabled: bool = True
+    check_interval_hours: float = 6.0
+    index_url: str = "https://pypi.org/pypi/{distribution}/json"
+    allow_prerelease: bool = False
 
 
 class ObservatoryConfig(BaseModel):
@@ -56,6 +69,7 @@ class ObservatoryConfig(BaseModel):
     # address, is what protects the mutating endpoints.
     host: str = "0.0.0.0"
     port: int = 7777
+    updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
 
 
 _DEFAULT_CONFIG_PATH = Path.home() / "seren-observatory" / "seren-observatory.yaml"

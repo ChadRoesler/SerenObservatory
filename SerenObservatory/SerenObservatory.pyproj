@@ -25,10 +25,8 @@
     <Compile Include="seren_observatory\auth.py" />
     <Compile Include="seren_observatory\lifecycle.py" />
     <Compile Include="seren_observatory\manifests.py" />
-    <Compile Include="seren_observatory\request_log.py" />
     <Compile Include="seren_observatory\service_routes.py" />
     <Compile Include="seren_observatory\system_routes.py" />
-    <Compile Include="seren_observatory\_version.py" />
     <Compile Include="seren_observatory\__init__.py" />
     <Compile Include="seren_observatory\services\comfy.py" />
     <Compile Include="seren_observatory\services\coral.py" />
@@ -55,7 +53,6 @@
     <Folder Include="examples\seren\services\" />
     <Folder Include="seren_observatory\" />
     <Folder Include="seren_observatory\services\" />
-    <Folder Include="seren_observatory\services\__pycache__\" />
     <Folder Include="seren_observatory\viewer\" />
     <Folder Include="seren_observatory\viewer\ui\" />
     <Folder Include="tests\" />
@@ -70,12 +67,6 @@
     <Content Include="README.md" />
     <Content Include="seren-observatory.service.sample" />
     <Content Include="seren-observatory.yaml.sample" />
-    <Content Include="seren_observatory\services\__pycache__\comfy.cpython-311.pyc" />
-    <Content Include="seren_observatory\services\__pycache__\coral.cpython-311.pyc" />
-    <Content Include="seren_observatory\services\__pycache__\kokoro.cpython-311.pyc" />
-    <Content Include="seren_observatory\services\__pycache__\llama.cpython-311.pyc" />
-    <Content Include="seren_observatory\services\__pycache__\whisper.cpython-311.pyc" />
-    <Content Include="seren_observatory\services\__pycache__\__init__.cpython-311.pyc" />
     <Content Include="seren_observatory\viewer\ui\body.html" />
     <Content Include="seren_observatory\viewer\ui\header_aside.html" />
     <Content Include="seren_observatory\viewer\ui\scripts.js" />

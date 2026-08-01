@@ -11,7 +11,9 @@ import os
 import time
 from typing import Any
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, Request, UploadFile
+
+from seren_meninges.updates import updates_payload
 
 from . import __version__, lifecycle, manifests
 
@@ -25,11 +27,21 @@ async def ping() -> dict[str, Any]:
 
 
 @router.get("/version")
-async def version() -> dict[str, Any]:
-    """Observatory version + manifest schema. PUBLIC - bypasses auth."""
+async def version(request: Request) -> dict[str, Any]:
+    """Observatory version + manifest schema. PUBLIC - bypasses auth.
+
+    The update block lives HERE rather than on ``/`` the way the rest of the
+    family does it, and that's deliberate: the Observatory's ``/`` returns an
+    HTML landing page, not JSON, and it's documented as links-only with no
+    service data. This route already exists to answer "what version are you",
+    so "...and is there a newer one" belongs on the same answer.
+    """
     return {
         "observatory_version": __version__,
         "manifest_schema": manifests.SCHEMA_VERSION,
+        "updates": await updates_payload(
+            getattr(request.app.state, "updates", None),
+            distribution="seren-observatory", installed=__version__),
     }
 
 

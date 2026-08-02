@@ -136,7 +136,7 @@ jobs:
           # core deps can only mean seren-meninges resolved too old. "error" is
           # still fine: a runner with no egress is a legitimate answer.
           assert u["status"] != "unavailable", (
-              f"status=unavailable in shape ${{{{ matrix.shape.label }}}} - update "
+              f"status=unavailable in shape ${{ matrix.shape.label }} - update "
               f"checking is core now, so this means seren-meninges resolved too "
               f"old or the checker was never constructed. detail={u['detail']}"
           )

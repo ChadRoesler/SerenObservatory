@@ -114,19 +114,32 @@ jobs:
           assert set(u) == expected, f"key drift: {set(u) ^ expected}"
           assert isinstance(u["update_available"], bool)
 
-          if "${{ matrix.shape.updates }}" == "unavailable":
-              # No [updates] extra -> say so plainly, and NEVER report a clean
-              # bill of health it has no way to verify.
-              assert u["status"] == "unavailable", f"expected unavailable, got {u['status']}"
+          # DELIBERATELY NOT ASSERTED: that a non-[updates] shape reports
+          # "unavailable". That assertion was wrong and cost real debugging
+          # time. seren_meninges.updates lazily imports httpx + packaging, so
+          # the [updates] extra GUARANTEES they are present - but its absence
+          # guarantees nothing. Six of the nine services already depend on
+          # httpx directly, and sentence-transformers drags it in on top, so
+          # update checking simply works without the extra. "It worked" is
+          # not a failure, and a test that says otherwise sends you hunting a
+          # bug that isn't there.
+          #
+          # What IS invariant:
+          KNOWN = {"ok", "disabled", "unavailable", "error"}
+          assert u["status"] in KNOWN, f"unknown status {u['status']!r}"
+          if u["status"] == "unavailable":
               assert u["update_available"] is False
-              assert u["detail"], "unavailable must carry a reason"
-          else:
-              # With the extra, anything but "unavailable" passes - the runner
-              # may not reach PyPI, and "error" is correct for a box offline.
-              assert u["status"] != "unavailable", (
-                  "[updates] installed but the checker did not wire up - usually a "
-                  "seren-meninges floor that resolved something too old"
-              )
+              assert u["detail"], "unavailable must say how to fix it"
+          # Update checking is CORE in seren-meninges now, not an extra, so it
+          # must be wired in EVERY shape - bare included. "unavailable" means
+          # the checker was never built or its deps are missing, which with
+          # core deps can only mean seren-meninges resolved too old. "error" is
+          # still fine: a runner with no egress is a legitimate answer.
+          assert u["status"] != "unavailable", (
+              f"status=unavailable in shape ${{{{ matrix.shape.label }}}} - update "
+              f"checking is core now, so this means seren-meninges resolved too "
+              f"old or the checker was never constructed. detail={u['detail']}"
+          )
           print(f"updates block OK: status={u['status']}")
           PY
 

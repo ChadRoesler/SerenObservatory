@@ -35,7 +35,7 @@ dependencies = [
 	# Observatory's bearer is a ~/.seren/secrets.json safety interlock, not a
 	# Meninges-resolved config token. No [keyring] extra: this service never
 	# writes secrets to the OS keychain.
-	"seren-meninges>=2.1.0,<3",
+	"seren-meninges>=2.2.0,<3",
 	# Shared request logging - ONE copy across the family (SerenSinew),
 	# replacing the per-service request_log.py. env_prefix preserves
 	# Observatory's SEREN_AGENT_LOG_* contract; service_name resolves the
@@ -49,15 +49,13 @@ dev = [
 	"pytest-asyncio>=0.24",
 	"httpx2>=0.28",   # Starlette TestClient's successor HTTP backend (Tom Christie / pydantic); silences the httpx-deprecation warning
 ]
-# "is there a newer seren-lodestar" reporting on GET /. Opt-in, because a
-# service that never leaves a LAN has no reason to talk to PyPI. Pulls the
-# Meninges extra rather than httpx/packaging directly - the check lives in
-# seren_meninges.updates and only one repo should own that dep set.
-#
-# The floor matches the core dep above: updates.py landed in 2.0.0 and updates_payload in 2.1.0.
-# Resolve anything older and the lifespan import fails, leaving you with
-# status="unavailable" forever and no obvious reason why.
-updates = ["seren-meninges[updates]>=2.1.0,<3"]
+# Kept as an EMPTY alias. Update checking is CORE in seren-meninges now, and
+# meninges is already a core dependency of this service, so there is nothing
+# left for this extra to install. The name stays because it appears in the
+# Starwright installers (--updates), in docs, and in people's notes - and an
+# unknown extra only earns a "does not provide the extra" warning that trains
+# operators to ignore warnings.
+updates = []
 
 [project.scripts]
 seren-observatory = "seren_observatory.app:main"

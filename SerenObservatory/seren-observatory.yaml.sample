@@ -20,3 +20,23 @@ server:
   #   Authorization: Bearer <token>
   # on every endpoint except / and /health.
   bearer_token: ""
+
+# ── Update checking ───────────────────────────────────────────────────
+#
+# Asks the package index whether a newer seren-observatory exists, and reports it on
+# GET /api/v1/system/version. Purely informational - the service never upgrades itself. Applying
+# an update is `pip install -U seren-observatory` plus a restart, which belongs to your
+# service supervisor (systemd, NSSM), not to this process.
+#
+# Enabled here by default, but it only DOES anything if the checking code is
+# installed:  pip install 'seren-observatory[updates]'
+# Without that you get status="unavailable" plus a reason - never a quiet
+# "you're up to date" from something that never actually looked.
+#
+# The result is cached for check_interval_hours and the lookup never happens
+# in the request path, so the route stays fast.
+updates:
+  enabled: true
+  check_interval_hours: 6      # cached; never checked per-request
+  allow_prerelease: false      # true would offer you e.g. 2.0.0rc1
+  # index_url: "https://pypi.org/pypi/{distribution}/json"   # private index?

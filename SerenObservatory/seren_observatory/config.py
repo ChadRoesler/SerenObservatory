@@ -164,4 +164,9 @@ def load_config(path: Optional[str] = None) -> ObservatoryConfig:
     if env_overrides:
         _apply_server_overrides(cfg, env_overrides, source="environment")
 
+    # Update checking is cosmetic, so it gets a deploy-time off switch that
+    # needs no config file - handy for a systemd unit or a locked-down box
+    # that must not make outbound calls.
+    if (v := os.getenv("SEREN_AGENT_UPDATES_ENABLED")) is not None:
+        cfg.updates.enabled = v.strip().lower() in ("1", "true", "yes", "on")
     return cfg

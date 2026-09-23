@@ -54,7 +54,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     app = FastAPI(
         title="seren-observatory",
         version=APP_VERSION,
-        description="Per-Jetson management plane. Manifest-driven service "
+        description="Per-node management plane. Manifest-driven service "
                     "lifecycle, status, and orchestration. Bearer token auth "
                     "on everything except /api/v1/system/{ping,version}.",
     )
@@ -128,7 +128,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
 <html><head><title>seren-observatory - {host}</title></head>
 <body style="font-family: system-ui; max-width: 720px; margin: 2rem auto; padding: 0 1rem;">
 <h1>seren-observatory</h1>
-<p>Per-Jetson management plane for the Seren cluster.</p>
+<p>Per-node management plane for the Seren cluster.</p>
 <dl>
   <dt>Hostname:</dt> <dd>{host}</dd>
   <dt>Observatory version:</dt> <dd>{APP_VERSION}</dd>
@@ -166,15 +166,26 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     # System routes (ping, version, node, services, health, reclaim)
     app.include_router(system_router)
 
-    # Per-service routes - one router per installed service
+    # Service routes: one universal router that discovers manifests per
+    # request, plus the service-specific handlers (code, not installs).
     mounted = register_all_services(app)
-    print(f"[seren-observatory] mounted services: {mounted}")
+    print(f"[seren-observatory] service verbs discover manifests per request; "
+          f"specific handlers mounted for: {mounted}")
 
     return app
 
 
-# Module-level app for `uvicorn seren_observatory.app:app`
-app = create_app()
+def __getattr__(name: str):
+    """`uvicorn seren_observatory.app:app` still works - the app is built the
+    first time something asks for it, not at import. Building it at import
+    meant `python -m seren_observatory` constructed the app twice (once here,
+    once in main), read the token twice, and printed the mount line twice.
+    """
+    if name == "app":
+        built = create_app()
+        globals()["app"] = built
+        return built
+    raise AttributeError(name)
 
 
 if __name__ == "__main__":
@@ -184,7 +195,7 @@ if __name__ == "__main__":
     # console script does so host/port behave identically. (`python -m
     # seren_observatory` -> __main__.py is the preferred, --config-aware entry.)
     _cfg = load_config()
-    uvicorn.run(app, host=_cfg.host, port=_cfg.port, log_level="info")
+    uvicorn.run(create_app(_cfg), host=_cfg.host, port=_cfg.port, log_level="info")
 
 
 def main() -> None:

@@ -17,8 +17,8 @@ exists. Putting the token in a yaml field would add a second, lower-security
 path (yaml may be 644, may be committed) next to the deliberate secrets.json
 one - a security regression dressed as consistency. Follow-the-leader on
 STRUCTURE (--config, server: block, resolution order); NOT on collapsing auth
-into config. (Same spirit as Margin keeping 127.0.0.1 instead of inheriting
-Memory's 0.0.0.0.)
+into config. (Observatory is the one service that binds the LAN by default; every sibling
+is loopback since seren-meninges 2.3.0, and this file says 0.0.0.0 on purpose.)
 
 Precedence (highest wins):
     1. Env vars  (AGENT_HOST/AGENT_PORT, and the SEREN_AGENT_* aliases)

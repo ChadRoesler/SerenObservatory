@@ -64,7 +64,7 @@ class ObservatoryConfig(BaseModel):
     """
 
     # Bind all interfaces by default - the observatory is a cluster plane meant to be
-    # reached from the NUC/RuntimeHost across the trusted LAN. (Contrast Margin,
+    # reached from Lodestar across the trusted LAN. (Contrast Margin,
     # which is private and binds 127.0.0.1.) The auth interlock, not the bind
     # address, is what protects the mutating endpoints.
     host: str = "0.0.0.0"

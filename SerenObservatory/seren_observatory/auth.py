@@ -50,6 +50,9 @@ PUBLIC_PATHS = frozenset({
     "/viewer",                      # the glance HTML shell - public like /, but
                                     # its /api/v1/* fetches still carry the token,
                                     # and mutations still fail closed without one.
+    "/docs",                        # the API description. The root page links it
+    "/openapi.json",                # and the README promises it; the routes it
+                                    # describes still need the token.
     "/api/v1/system/ping",
     "/api/v1/system/version",
 })

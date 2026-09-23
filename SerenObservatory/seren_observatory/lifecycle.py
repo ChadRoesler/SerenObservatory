@@ -40,6 +40,39 @@ from . import manifests
 
 
 # ═════════════════════════════════════════════════════════════════════
+# Concurrency shape - READ THIS BEFORE ADDING A HANDLER.
+#
+# Every handler that shells out (_pid_*, _systemd_*, _docker_*) is a plain
+# SYNCHRONOUS function, and that is deliberate: subprocess.run and the
+# port-release poll are blocking calls and they should look like it. The
+# public dispatchers at the bottom of this file are the async surface: they
+# run the sync handler in a worker thread (asyncio.to_thread) under a
+# PER-SERVICE lock.
+#
+# Why the thread: a pid_file restart is up to 30s of stop script + 10s of
+# port polling + 30s of start script. Run inline on the event loop that
+# froze every other request - /system/ping included - for the whole minute,
+# and Lodestar's 2-second discovery probe declared the node dead in the
+# middle of a restart it had asked for.
+#
+# Why the lock: two "start llama" clicks a second apart used to race two
+# start scripts. With the lock the second waits, then sees already_running.
+# The lock is per service, not global, so restarting kokoro never queues
+# behind llama.
+# ═════════════════════════════════════════════════════════════════════
+
+_service_locks: dict[str, asyncio.Lock] = {}
+
+
+def _lock_for(manifest: dict[str, Any]) -> asyncio.Lock:
+    name = str(manifest.get("service") or id(manifest))
+    lock = _service_locks.get(name)
+    if lock is None:
+        lock = _service_locks[name] = asyncio.Lock()
+    return lock
+
+
+# ═════════════════════════════════════════════════════════════════════
 # Shared low-level helpers - process info, port probes, log tailing.
 # Used by multiple handler families.
 # ═════════════════════════════════════════════════════════════════════
@@ -371,7 +404,10 @@ def _systemd_run(args: list[str], timeout: float = 10.0) -> dict[str, Any]:
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"systemctl timed out after {timeout}s"}
     except FileNotFoundError:
-        return {"ok": False, "error": "systemctl not on PATH"}
+        # argv[0] is sudo, so this is sudo missing at least as often as it
+        # is systemctl - say both rather than send someone hunting for the
+        # wrong binary.
+        return {"ok": False, "error": "sudo or systemctl not on PATH"}
 
     return {
         "ok": result.returncode == 0,
@@ -452,7 +488,7 @@ async def _systemd_status(manifest: dict[str, Any]) -> dict[str, Any]:
             "error": "manifest missing systemd_unit",
         }
 
-    if not _systemd_is_active(unit):
+    if not await asyncio.to_thread(_systemd_is_active, unit):
         return {
             "service": manifest.get("service"),
             "service_type": "systemd",
@@ -463,7 +499,9 @@ async def _systemd_status(manifest: dict[str, Any]) -> dict[str, Any]:
     # systemctl show gives us authoritative state. MemoryCurrent reflects
     # the cgroup's memory which is accurate even for services that fork
     # children. MainPID gives us a handle into /proc for CPU% + uptime.
-    props = _systemd_show(unit, ["MainPID", "MemoryCurrent"])
+    # Both shellouts run in a worker thread - status is what Lodestar polls,
+    # and a poll must never be the thing that stalls the plane.
+    props = await asyncio.to_thread(_systemd_show, unit, ["MainPID", "MemoryCurrent"])
 
     main_pid_str = props.get("MainPID", "0")
     try:
@@ -516,7 +554,7 @@ async def _systemd_status(manifest: dict[str, Any]) -> dict[str, Any]:
 #
 # Naive implementation called both shellouts per-container, per status
 # request - N containers → 2N shellouts → ~4s for a 2-container stack.
-# That blew past RuntimeHost's polling timeout and made the NUC look
+# That blew past Lodestar's polling timeout and made the NUC look
 # unreachable.
 #
 # Fix: ONE shellout for the entire host's docker state, cached for
@@ -920,10 +958,14 @@ def _docker_tail_log(manifest: dict[str, Any], lines: int) -> dict[str, Any]:
     }
 
 # ═════════════════════════════════════════════════════════════════════
-# Public dispatchers - what service_routes.py calls
+# Public dispatchers - what service_routes.py calls.
+#
+# `start`, `stop`, `restart` and `tail_log` are ASYNC. The `_sync` twins
+# below them are the dispatch logic itself and are what runs in the worker
+# thread; tests and anything already on a thread may call those directly.
 # ═════════════════════════════════════════════════════════════════════
 
-def start(manifest: dict[str, Any]) -> dict[str, Any]:
+def _start_sync(manifest: dict[str, Any]) -> dict[str, Any]:
     stype = manifests.service_type(manifest)
     if stype == "pid_file":      return _pid_start(manifest)
     if stype == "library":       return _library_unsupported_op("start")
@@ -932,7 +974,7 @@ def start(manifest: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "error": f"unknown service_type: {stype}"}
 
 
-def stop(manifest: dict[str, Any]) -> dict[str, Any]:
+def _stop_sync(manifest: dict[str, Any]) -> dict[str, Any]:
     stype = manifests.service_type(manifest)
     if stype == "pid_file":      return _pid_stop(manifest)
     if stype == "library":       return _library_unsupported_op("stop")
@@ -941,30 +983,54 @@ def stop(manifest: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "error": f"unknown service_type: {stype}"}
 
 
-def restart(manifest: dict[str, Any]) -> dict[str, Any]:
+def _restart_sync(manifest: dict[str, Any]) -> dict[str, Any]:
     """pid_file uses the port-release dance to fix the historical
     'stop fires but new process can't bind' bug. systemd and
     docker_compose use their native restart commands which handle
-    teardown internally."""
+    teardown internally.
+
+    A restart is a STOP THAT WORKED followed by a start. If the stop script
+    fails, nothing starts: the old code took `ok` from the start half only,
+    so a failed stop with a free port (the process alive but not yet
+    listening) reported ok:true with the old process untouched. Now a failed
+    stop is the answer, and a process that is still alive after its stop
+    script returned is an error, not a thing to start on top of.
+    """
     stype = manifests.service_type(manifest)
 
     if stype == "pid_file":
         stop_res = _pid_stop(manifest)
+        if not stop_res.get("ok", False):
+            return {
+                "ok": False,
+                "error": "stop failed - not starting on top of it: "
+                         + str(stop_res.get("error") or stop_res.get("stderr") or "see stop"),
+                "stop": stop_res,
+                "start": None,
+            }
+        still = _pid_read(manifest)
+        if still is not None:
+            return {
+                "ok": False,
+                "error": f"process {still} is still alive after the stop script returned",
+                "hint": "the stop script exited 0 without stopping anything - check it",
+                "stop": stop_res,
+                "start": None,
+            }
         port = int(manifest.get("port") or 0)
         port_released = _wait_for_port_release(port, timeout_s=10.0)
         if not port_released:
             return {
                 "ok": False,
+                "error": f"port {port} still held 10s after stop - refusing to start",
+                "hint": f"check: sudo lsof -i :{port}",
                 "stop": stop_res,
-                "start": {
-                    "ok": False,
-                    "error": f"port {port} still held 10s after stop - refusing to start",
-                    "hint": f"check: sudo lsof -i :{port}",
-                },
+                "start": None,
             }
         start_res = _pid_start(manifest)
         return {
             "ok": start_res.get("ok", False),
+            "error": start_res.get("error"),
             "stop": stop_res,
             "start": start_res,
             "port_released": port_released,
@@ -974,6 +1040,21 @@ def restart(manifest: dict[str, Any]) -> dict[str, Any]:
     if stype == "systemd":        return _systemd_restart(manifest)
     if stype == "docker_compose": return _docker_restart(manifest)
     return {"ok": False, "error": f"unknown service_type: {stype}"}
+
+
+async def start(manifest: dict[str, Any]) -> dict[str, Any]:
+    async with _lock_for(manifest):
+        return await asyncio.to_thread(_start_sync, manifest)
+
+
+async def stop(manifest: dict[str, Any]) -> dict[str, Any]:
+    async with _lock_for(manifest):
+        return await asyncio.to_thread(_stop_sync, manifest)
+
+
+async def restart(manifest: dict[str, Any]) -> dict[str, Any]:
+    async with _lock_for(manifest):
+        return await asyncio.to_thread(_restart_sync, manifest)
 
 
 async def status(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -992,7 +1073,13 @@ async def status(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def tail_log(manifest: dict[str, Any], lines: int = 100) -> dict[str, Any]:
+async def tail_log(manifest: dict[str, Any], lines: int = 100) -> dict[str, Any]:
+    """Tail the last N lines of the service's logs. Threaded: the docker path
+    shells out and the file path can be on a slow SD card."""
+    return await asyncio.to_thread(_tail_log_sync, manifest, lines)
+
+
+def _tail_log_sync(manifest: dict[str, Any], lines: int = 100) -> dict[str, Any]:
     """Tail the last N lines of the service's logs.
 
     Most service types log to a file (~/seren-logs/<name>.log). Docker is
@@ -1038,6 +1125,11 @@ async def probe_port(manifest: dict[str, Any]) -> dict[str, Any]:
 # ═════════════════════════════════════════════════════════════════════
 # Backwards-compat shims - pre-Path-C callers used these names directly.
 # ═════════════════════════════════════════════════════════════════════
+
+
+async def read_pid_async(manifest: dict[str, Any]) -> int | None:
+    """read_pid off the event loop - the docker path can shell out cold."""
+    return await asyncio.to_thread(read_pid, manifest)
 
 
 def read_pid(manifest: dict[str, Any]) -> int | None:

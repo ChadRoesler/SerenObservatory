@@ -6,9 +6,9 @@ running there - so the cluster head can drive the whole constellation without
 SSH-ing into every node by hand.
 
 You don't usually talk to the observatory directly. It's a *plane*, not a
-destination: [SerenRuntimeHost](https://github.com/ChadRoesler) (the cluster
-head) talks to it, aggregates every node's observatorys into one API, and serves
-the dashboard. The observatory is the thing on the far end that actually does the
+destination: [SerenLodestar](https://github.com/ChadRoesler/SerenLodestar) (the
+cluster head) talks to it, aggregates every node's observatory into one API, and
+serves the dashboard. The observatory is the thing on the far end that actually does the
 work on each machine.
 
 It's manifest-driven - it reads `~/.seren/services/*.json` to learn what
@@ -94,7 +94,10 @@ curl -H "Authorization: Bearer $TOKEN" \
   -X POST localhost:7777/api/v1/service/llama/restart
 ```
 
-There's a browsable info page at `/` and full interactive docs at `/docs`.
+There's a browsable info page at `/` and interactive docs at `/docs` (the
+description is public; calling anything from it still needs the token).
+Install a service and its lifecycle verbs are live on the next request - no
+restart, the manifest is read when the call arrives.
 The root page shows your auth state up front - "configured" or "DISABLED (no
 token)" - so you can see at a glance whether the interlock is armed.
 
@@ -142,7 +145,7 @@ the LAN.
 
 SerenObservatory is a piece of [Seren](https://github.com/ChadRoesler) - a fully
 self-hosted local AI companion stack. It's the per-node muscle: the cluster
-head ([SerenRuntimeHost](https://github.com/ChadRoesler)) is the brain that
+head ([SerenLodestar](https://github.com/ChadRoesler/SerenLodestar)) is the brain that
 aggregates and decides; the observatory is what actually touches each machine. You
 run one on every node in your cluster.
 

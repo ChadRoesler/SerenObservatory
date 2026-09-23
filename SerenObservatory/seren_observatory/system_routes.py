@@ -216,9 +216,12 @@ async def services_summary() -> dict[str, Any]:
 
 @router.get("/health")
 async def system_health() -> dict[str, Any]:
-    """Rollup health: 200 if every running service is healthy, 503 otherwise.
+    """Rollup health. Always 200; `ok` in the body is the verdict.
 
-    Suitable for dashboard health lights and SCC's cluster-wide rollup.
+    Lodestar reads the body, not the status code, and a 503 here would
+    make an unhealthy service look like an unreachable node to anything
+    that only checks the code. Suitable for dashboard health lights and
+    Lodestar's cluster-wide rollup.
     """
     all_manifests = manifests.load_services()
 
@@ -255,49 +258,95 @@ async def system_health() -> dict[str, Any]:
     }
 
 
-@router.post("/reclaim")
-async def reclaim(body: dict | None = None) -> dict[str, Any]:
-    """Stop idle services to free GPU memory.
+#: Service types whose whole point is holding the GPU: the pid_file daemons
+#: (llama, kokoro, comfy, whisper). Reclaim means "give me the GPU back",
+#: and these are the only things that have it.
+RECLAIMABLE_TYPES = frozenset({"pid_file"})
 
-    Body (optional):
-        target_free_mb: int     - release until at least this much GPU/system memory free
-        exclude:        [str]   - service names to never stop
-        policy:         str     - "idle" (default) | "aggressive"
+#: The observatory's own manifest, by any of the names it has worn. Reclaim
+#: never stops the thing that is running reclaim.
+SELF_NAMES = frozenset({"observatory", "seren-observatory", "agent", "seren-agent"})
 
-    Currently the implementation is simple: stops every service except
-    those in `exclude`, regardless of "idle" semantics. A future version
-    would track per-service last-request timestamps and only stop ones
-    above an idle threshold. For now this gives the dashboard a working
-    "free up memory" button.
+
+def reclaim_plan(all_manifests: dict[str, dict], *, exclude: set[str],
+                 include: set[str], everything: bool) -> tuple[list[tuple[str, dict]], list[dict]]:
+    """Decide what reclaim would stop, without stopping anything.
+
+    Returns (candidates, kept) where kept carries a `why` per service so the
+    caller can see the policy at work rather than infer it.
+
+    THE POLICY, and why it is not "everything but exclude" any more. That
+    version stopped the whole constellation: on the NUC the manifests are
+    seren-lodestar, seren-memory, seren-loci, the callosum, margin, searxng
+    and the observatory itself. "Free some memory" from the dashboard took
+    the head down, then the observatory ran `systemctl stop` on itself
+    mid-loop and never answered. So:
+
+      - the observatory's own manifest is never a candidate, full stop;
+      - only RECLAIMABLE_TYPES (the GPU daemons) are candidates by default;
+      - a systemd or docker_compose service is stopped only if the caller
+        NAMES it in `include`, or says `all: true` and does not exclude it;
+      - `exclude` always wins.
     """
-    body = body or {}
-    exclude = set(body.get("exclude", []))
-    all_manifests = manifests.load_services()
-
-    stopped: list[str] = []
-    kept: list[str] = []
-    failed: list[dict] = []
-
+    candidates: list[tuple[str, dict]] = []
+    kept: list[dict] = []
     for name, m in all_manifests.items():
+        stype = manifests.service_type(m)
+        if name in SELF_NAMES or (m.get("systemd_unit") or "") == "seren-observatory":
+            kept.append({"service": name, "why": "the observatory never stops itself"})
+            continue
         if name in exclude:
-            kept.append(name)
+            kept.append({"service": name, "why": "excluded by the caller"})
             continue
         if not manifests.service_has_lifecycle(m):
-            kept.append(name)  # library-mode services aren't stoppable
+            kept.append({"service": name, "why": "library-mode, nothing to stop"})
             continue
-        if lifecycle.read_pid(m) is None:
-            continue  # already stopped
-        result = lifecycle.stop(m)
+        if stype not in RECLAIMABLE_TYPES and not everything and name not in include:
+            kept.append({"service": name,
+                         "why": f"{stype} service - not a GPU daemon; name it in "
+                                f"`include` or pass `all: true` to stop it"})
+            continue
+        candidates.append((name, m))
+    return candidates, kept
+
+
+@router.post("/reclaim")
+async def reclaim(body: dict | None = None) -> dict[str, Any]:
+    """Stop the GPU daemons on this node so something else can have the GPU.
+
+    Body (optional):
+        exclude: [str]   - service names to never stop (always honoured)
+        include: [str]   - non-GPU services (systemd / docker) to stop as well
+        all:     bool    - stop every stoppable service except `exclude` and
+                           the observatory itself. The old default; now a
+                           thing you have to say.
+
+    See reclaim_plan for the policy and the incident behind it. `kept` is a
+    list of {service, why} so the caller can see WHY something stayed up,
+    which is the difference between a policy and a surprise.
+    """
+    body = body or {}
+    exclude = {str(s) for s in (body.get("exclude") or [])}
+    include = {str(s) for s in (body.get("include") or [])}
+    everything = bool(body.get("all", False))
+    all_manifests = manifests.load_services()
+
+    candidates, kept = reclaim_plan(all_manifests, exclude=exclude,
+                                    include=include, everything=everything)
+    stopped: list[str] = []
+    failed: list[dict] = []
+    for name, m in candidates:
+        if await lifecycle.read_pid_async(m) is None:
+            kept.append({"service": name, "why": "already stopped"})
+            continue
+        result = await lifecycle.stop(m)
         if result.get("ok"):
             stopped.append(name)
         else:
-            failed.append({"service": name, "error": result.get("error")})
+            failed.append({"service": name,
+                           "error": result.get("error") or result.get("stderr") or "stop failed"})
 
-    return {
-        "stopped": stopped,
-        "kept": kept,
-        "failed": failed,
-    }
+    return {"stopped": stopped, "kept": kept, "failed": failed}
 
 @router.post("/reboot")
 async def reboot(body: dict | None = None) -> dict[str, Any]:
@@ -326,7 +375,11 @@ async def reboot(body: dict | None = None) -> dict[str, Any]:
     import subprocess
 
     body = body or {}
-    delay = int(body.get("delay_minutes", 1))
+    try:
+        delay = int(body.get("delay_minutes", 1))
+    except (TypeError, ValueError):
+        return {"scheduled": False,
+                "error": f"delay_minutes must be a whole number of minutes, got {body.get('delay_minutes')!r}"}
     delay = max(0, min(60, delay))  # clamp 0..60
 
     # `shutdown -r +0` and `shutdown -r now` both mean "immediate" but the
@@ -430,18 +483,29 @@ async def observatory_update(
     package: UploadFile = File(...),
     dest_path: str = Form(...),
 ) -> dict[str, Any]:
-    """Receive a seren-observatory.tar.gz from the RuntimeHost and run the update script.
+    """Receive a seren-observatory.tar.gz from Lodestar and run the update script.
 
-    The RuntimeHost streams the package as multipart/form-data with two parts:
+    Lodestar streams the package as multipart/form-data with two parts:
         package   - the tar.gz file bytes
-        dest_path - absolute path on this node where the file should land
-                    (e.g. /home/seren/seren-install). The seren-observatory-update.sh
-                    script must live in the same directory.
+        dest_path - a DIRECTORY on this node where the file should land
+                    (e.g. /home/seren/seren-observatory). The
+                    seren-observatory-update.sh script must live in it.
 
-    The file is saved synchronously, then seren-observatory-update.sh is launched as
-    a detached background process before we return. The update script is expected
-    to restart the observatory - the response is sent first so the HTTP connection
-    closes cleanly before the process is replaced.
+    WHERE IT MAY LAND. `dest_path` comes from the head's config, and the head
+    is trusted - but "trusted" is not "unbounded", and this route ends in
+    `bash <that directory>/seren-observatory-update.sh`. So the directory
+    must resolve to somewhere under this user's home (or under
+    SEREN_AGENT_UPDATE_ROOT if the operator moved installs elsewhere).
+    Anything else is refused before a byte is written.
+
+    The upload is streamed to disk in chunks rather than read into memory:
+    a package is tens of megabytes and the Nano has eight gigabytes for
+    everything.
+
+    Then seren-observatory-update.sh is launched as a detached background
+    process before we return. The update script is expected to restart the
+    observatory - the response is sent first so the HTTP connection closes
+    cleanly before the process is replaced.
 
     Returns:
         ok:      bool  - true if the file was saved and the script was launched
@@ -455,7 +519,15 @@ async def observatory_update(
     if not dest:
         return {"ok": False, "message": None, "error": "dest_path is empty"}
 
-    dest_dir = os.path.expanduser(dest)
+    dest_dir = os.path.realpath(os.path.expanduser(dest))
+    root = os.path.realpath(os.path.expanduser(
+        os.environ.get("SEREN_AGENT_UPDATE_ROOT") or "~"))
+    if os.path.commonpath([dest_dir, root]) != root:
+        return {
+            "ok": False, "message": None,
+            "error": f"dest_path {dest!r} resolves outside {root}; updates may only "
+                     f"land under this user's home (or SEREN_AGENT_UPDATE_ROOT)",
+        }
     tar_path = os.path.join(dest_dir, "seren-observatory.tar.gz")
     script_path = os.path.join(dest_dir, "seren-observatory-update.sh")
 
@@ -465,11 +537,14 @@ async def observatory_update(
     except OSError as exc:
         return {"ok": False, "message": None, "error": f"could not create dest dir: {exc}"}
 
-    # Save the uploaded package
+    # Save the uploaded package, streamed.
     try:
-        contents = await package.read()
         with open(tar_path, "wb") as f:
-            f.write(contents)
+            while True:
+                chunk = await package.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
     except OSError as exc:
         return {"ok": False, "message": None, "error": f"could not write package: {exc}"}
 

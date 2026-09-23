@@ -5,38 +5,26 @@
 #  Copy to seren-observatory.yaml, edit, and run:
 #     python -m seren_observatory --config seren-observatory.yaml
 #
-#  Or just run with no config at all - the defaults below are baked in, so
-#  `python -m seren_observatory` works zero-config for a local dev spin.
+#  Or run with no config - the defaults below are baked in, so
+#  `python -m seren_observatory` works zero-config (0.0.0.0:7777).
 #
-#  Env vars override file values (handy for Docker/systemd):
-#     SEREN_AGENT_PORT, SEREN_AGENT_HOST, SEREN_AGENT_BEARER_TOKEN
+#  Resolution order (highest wins): env vars > this file > defaults.
+#  The file resolves: --config -> $SEREN_AGENT_CONFIG ->
+#  ~/seren-observatory/seren-observatory.yaml -> defaults. Same shape as SerenMemory.
 #
+#  Env overrides (handy for systemd):  AGENT_HOST/AGENT_PORT, or the
+#  namespaced SEREN_AGENT_HOST / SEREN_AGENT_PORT.
+#
+#  ── ON THE TOKEN (read this) ───────────────────────────────────────────
+#  There is deliberately NO bearer_token field here. The observatory's token is a
+#  SAFETY INTERLOCK, not a config knob: this plane can restart services and
+#  trigger a sudoers-backed reboot. The token lives in ~/.seren/secrets.json
+#  (chmod 600, written by seren-secrets.sh) and is loaded separately. Until
+#  it exists, the observatory fails CLOSED on service-management endpoints (reads
+#  stay open for monitoring). Putting the token in this yaml would add a
+#  second, lower-security path - so we don't. Run seren-secrets.sh to set it.
 # ═══════════════════════════════════════════════════════════════════════
 
 server:
-  host: 0.0.0.0
+  host: 0.0.0.0    # reachable across the trusted LAN (cluster plane)
   port: 7777
-  # Leave empty for no auth (trusted LAN / dev). Set a token to require
-  #   Authorization: Bearer <token>
-  # on every endpoint except / and /health.
-  bearer_token: ""
-
-# ── Update checking ───────────────────────────────────────────────────
-#
-# Asks the package index whether a newer seren-observatory exists, and reports it on
-# GET /api/v1/system/version. Purely informational - the service never upgrades itself. Applying
-# an update is `pip install -U seren-observatory` plus a restart, which belongs to your
-# service supervisor (systemd, NSSM), not to this process.
-#
-# Enabled here by default, but it only DOES anything if the checking code is
-# installed:  pip install 'seren-observatory[updates]'
-# Without that you get status="unavailable" plus a reason - never a quiet
-# "you're up to date" from something that never actually looked.
-#
-# The result is cached for check_interval_hours and the lookup never happens
-# in the request path, so the route stays fast.
-updates:
-  enabled: true
-  check_interval_hours: 6      # cached; never checked per-request
-  allow_prerelease: false      # true would offer you e.g. 2.0.0rc1
-  # index_url: "https://pypi.org/pypi/{distribution}/json"   # private index?

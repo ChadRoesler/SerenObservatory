@@ -1,4 +1,4 @@
-# SerenMemory systemd unit (sample)
+# SerenObservatory systemd unit (sample)
 #
 # Install:
 #   1. Edit __TARGET_USER__ and paths below
@@ -23,8 +23,9 @@ ExecStart=/home/__TARGET_USER__/seren-venvs/observatory/bin/python -m seren_obse
 
 # Config can also come from env - uncomment + set as needed:
 # Environment=SEREN_AGENT_PORT=7777
-# Environment=SEREN_AGENT_MODEL_URL=http://localhost:8090/v1
-# Environment=SEREN_AGENT_BEARER_TOKEN=
+# Environment=SEREN_AGENT_HOST=0.0.0.0
+# The bearer token is NOT an env var or a yaml key: it lives in
+# ~/.seren/secrets.json (run seren-secrets.sh). See config.py for why.
 
 Restart=on-failure
 RestartSec=5

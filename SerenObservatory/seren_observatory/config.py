@@ -11,7 +11,7 @@ who set up one service already knows how to set up this one:
 DELIBERATE EXCEPTION - the bearer token is NOT here. Unlike SerenMemory, the
 observatory's token is a SAFETY INTERLOCK, not a config knob: this plane can restart
 services and trigger a sudoers-backed reboot, so the token lives in
-~/.seren/secrets.json (chmod 600, written by seren-secrets.sh) and is loaded
+~/.seren/secrets.json (chmod 600, written by the installer's --gen-token) and is loaded
 by auth.load_token(). The observatory fails CLOSED on mutating methods when no token
 exists. Putting the token in a yaml field would add a second, lower-security
 path (yaml may be 644, may be committed) next to the deliberate secrets.json
@@ -118,7 +118,7 @@ def _apply_server_overrides(cfg: ObservatoryConfig, server: dict[str, Any], *, s
             # Loud, specific note: the token is not a config field by design.
             print("[seren-observatory] config: 'bearer_token' in the yaml is ignored "
                   "by design - the observatory token lives in ~/.seren/secrets.json "
-                  "(run seren-secrets.sh). See config.py for why.")
+                  "(the installer's --gen-token writes it). See config.py for why.")
             continue
         if key not in known:
             print(f"[seren-observatory] config: ignoring unknown server key '{key}' from {source}")

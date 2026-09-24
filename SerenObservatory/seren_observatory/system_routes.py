@@ -366,9 +366,10 @@ async def reboot(body: dict | None = None) -> dict[str, Any]:
     to flush back to the caller AND a window where you can `sudo shutdown
     -c` (or POST /reboot/cancel) if you fat-fingered the dashboard.
 
-    Requires sudoers grant for /sbin/shutdown -r * - added by host-setup.sh
-    and seren-prepare-node.sh's install_observatory_common. Existing installs need the
-    seren-sudoers-update.sh migration to add the new grant.
+    Requires the sudoers grant for /sbin/shutdown -r *, written to
+    /etc/sudoers.d/seren by seren-prepare-node.sh (Starwright). A node prepared
+    before that file carried the reboot lines gets them from
+    `seren-prepare-node.sh --prep`, which rewrites the grant.
     """
     import datetime
     import shlex
@@ -412,8 +413,8 @@ async def reboot(body: dict | None = None) -> dict[str, Any]:
             "command": shlex.join(cmd),
             "hint": (
                 "If stderr mentions 'a password is required', the observatory's "
-                "sudoers file is missing the /sbin/shutdown grant. Run "
-                "seren-sudoers-update.sh on this node (or re-run host-setup.sh)."
+                "sudoers file is missing the /sbin/shutdown grant. Re-run "
+                "`seren-prepare-node.sh --prep` on this node (Starwright) to rewrite it."
             ),
         }
 

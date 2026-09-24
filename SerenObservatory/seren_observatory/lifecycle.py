@@ -390,6 +390,22 @@ def _systemd_unit_name(manifest: dict[str, Any]) -> str | None:
     return manifest.get("serviceSpecific", {}).get("systemd_unit")
 
 
+# The node's sudoers grants ONE systemctl: /usr/local/sbin/seren-systemctl,
+# which takes a verb and a single seren-* unit and refuses anything else
+# (installed by seren-prepare-node.sh; see its header for why a sudoers glob
+# could not do that job). When it is present, use it. When it is not - an
+# older node, or a box prepared by hand - fall back to bare systemctl, which
+# is what the older, wider grant allowed.
+SEREN_SYSTEMCTL = "/usr/local/sbin/seren-systemctl"
+
+
+def _privileged_systemctl(args: list[str]) -> list[str]:
+    """['systemctl', verb, unit] -> the argv sudo is asked to run."""
+    if args and args[0] == "systemctl" and os.path.exists(SEREN_SYSTEMCTL):
+        return [SEREN_SYSTEMCTL] + args[1:]
+    return args
+
+
 def _systemd_run(args: list[str], timeout: float = 10.0) -> dict[str, Any]:
     """Run a systemctl command via sudo -n.
 
@@ -398,7 +414,7 @@ def _systemd_run(args: list[str], timeout: float = 10.0) -> dict[str, Any]:
     """
     try:
         result = subprocess.run(
-            ["sudo", "-n"] + args,
+            ["sudo", "-n"] + _privileged_systemctl(args),
             capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:

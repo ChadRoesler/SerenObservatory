@@ -23,8 +23,10 @@ The observatory can restart services and trigger a sudoers-backed reboot. That's
 lot of power for an HTTP endpoint, so the observatory treats its auth token as a
 **safety interlock, not a convenience knob.**
 
-- The token lives in `~/.seren/secrets.json` (chmod 600), written by
-  `seren-secrets.sh`. It is **not** a config field - you won't find it in the
+- The token lives in `~/.seren/secrets.json` (chmod 600) as
+  `{"observatory_token": "..."}`, written by the installer when you pass
+  `--gen-token` or `--token` (`-GenToken` / `-Token` on Windows), or by hand.
+  It is **not** a config field - you won't find it in the
   yaml, on purpose. Putting it there would add a second, weaker path to the
   one thing that gates rebooting your hardware.
 - **Until that token exists, the observatory fails CLOSED on anything that
@@ -33,8 +35,8 @@ lot of power for an HTTP endpoint, so the observatory treats its auth token as a
   token. An unprovisioned observatory on the network is never an open
   reboot-button.
 
-So the first thing you do on a new node is run `seren-secrets.sh`. Before
-that, the observatory is a read-only status reporter. After that, it's the full
+So install it with a token, or write the file. Before that, the observatory
+is a read-only status reporter. After that, it's the full
 plane - and every mutating call needs `Authorization: Bearer <token>`.
 
 This is also why the observatory binds `0.0.0.0` by default (the opposite of
@@ -53,8 +55,8 @@ bash seren-observatory-setup.sh
 # Want it to start on boot, too?
 bash seren-observatory-setup.sh --service
 
-# Provision the token so mutating endpoints come alive:
-bash seren-secrets.sh
+# With a token, so the mutating endpoints come alive (written to ~/.seren/secrets.json):
+bash seren-observatory-setup.sh --service --gen-token
 
 # Or run it straight, zero config:
 python -m seren_observatory

@@ -453,6 +453,17 @@ htmlcov/
 
 # mypy
 .mypy_cache/
+_version.py
 
 seren-observatory.yaml
 .seren/
+
+# -- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl

@@ -3,7 +3,8 @@
 Accepts --config / -c to match the SerenMemory convention (Memory leads, the
 rest follow). Host/port come from the resolved config (which itself layers
 defaults < yaml < env). The bearer token is NOT a config concern - it's loaded
-separately from ~/.seren/secrets.json by auth.load_token(). See config.py.
+separately from the secrets file (default ~/.seren/secrets.json; only its
+location is configurable) by auth.load_token(). See config.py.
 """
 from __future__ import annotations
 

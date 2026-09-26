@@ -197,8 +197,8 @@ def test_reclaim_all_still_never_stops_the_observatory_and_honours_exclude():
 
 @pytest.fixture
 def client(fake_home, monkeypatch):
-    monkeypatch.setattr("seren_observatory.auth.load_token", lambda: "tok")
-    monkeypatch.setattr("seren_observatory.app.load_token", lambda: "tok")
+    monkeypatch.setattr("seren_observatory.auth.load_token", lambda *a, **k: "tok")
+    monkeypatch.setattr("seren_observatory.app.load_token", lambda *a, **k: "tok")
     app = create_app(ObservatoryConfig())
     return TestClient(app, headers={"Authorization": "Bearer tok"})
 
@@ -252,7 +252,7 @@ def test_reboot_with_a_junk_delay_is_an_answer_not_a_500(client, monkeypatch):
 
 
 def test_docs_are_public_but_the_api_is_not(fake_home, monkeypatch):
-    monkeypatch.setattr("seren_observatory.app.load_token", lambda: "tok")
+    monkeypatch.setattr("seren_observatory.app.load_token", lambda *a, **k: "tok")
     c = TestClient(create_app(ObservatoryConfig()))
     assert c.get("/openapi.json").status_code == 200
     assert c.get("/api/v1/system/services").status_code == 401

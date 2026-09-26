@@ -4,11 +4,15 @@ Tests for seren_observatory.auth - token loading and middleware behaviour.
 from __future__ import annotations
 
 import json
+import os
 import stat
+from pathlib import Path
 
 import pytest
 
-from seren_observatory.auth import _constant_time_eq, load_token
+from seren_observatory.auth import (
+    SECRETS_ENV, _constant_time_eq, load_token, resolve_secrets_path,
+)
 
 
 class TestLoadToken:
@@ -18,30 +22,55 @@ class TestLoadToken:
     def test_loads_valid_token(self, fake_home, monkeypatch):
         secrets = fake_home / ".seren" / "secrets.json"
         secrets.write_text(json.dumps({"observatory_token": "supersecret"}))
-        import seren_observatory.auth as auth_mod
-        monkeypatch.setattr(auth_mod, "SECRETS_PATH", secrets)
-        assert load_token() == "supersecret"
+        assert load_token(secrets) == "supersecret"
 
     def test_returns_none_on_bad_json(self, fake_home, monkeypatch):
         secrets = fake_home / ".seren" / "secrets.json"
         secrets.write_text("not json")
-        import seren_observatory.auth as auth_mod
-        monkeypatch.setattr(auth_mod, "SECRETS_PATH", secrets)
-        assert load_token() is None
+        assert load_token(secrets) is None
 
     def test_returns_none_on_missing_key(self, fake_home, monkeypatch):
         secrets = fake_home / ".seren" / "secrets.json"
         secrets.write_text(json.dumps({"other_key": "value"}))
-        import seren_observatory.auth as auth_mod
-        monkeypatch.setattr(auth_mod, "SECRETS_PATH", secrets)
-        assert load_token() is None
+        assert load_token(secrets) is None
 
     def test_returns_none_on_empty_token(self, fake_home, monkeypatch):
         secrets = fake_home / ".seren" / "secrets.json"
         secrets.write_text(json.dumps({"observatory_token": ""}))
-        import seren_observatory.auth as auth_mod
-        monkeypatch.setattr(auth_mod, "SECRETS_PATH", secrets)
+        assert load_token(secrets) is None
+
+
+class TestSecretsPath:
+    """Where the token file is: $SEREN_OBSERVATORY_SECRETS -> the yaml's
+    server.secrets_path -> ~/.seren/secrets.json. Resolved at call time so
+    per-install roots (~/seren/<install>/...) actually take effect."""
+
+    def test_default_is_home_dot_seren(self, fake_home):
+        assert resolve_secrets_path() == fake_home / ".seren" / "secrets.json"
+        assert resolve_secrets_path() == Path(os.path.expanduser("~/.seren/secrets.json"))
+
+    def test_configured_path_is_used_and_expanded(self, fake_home):
+        got = resolve_secrets_path("~/seren/alpha/secrets.json")
+        assert got == fake_home / "seren" / "alpha" / "secrets.json"
+
+    def test_env_beats_configured(self, fake_home, monkeypatch):
+        monkeypatch.setenv(SECRETS_ENV, "~/seren/beta/secrets.json")
+        got = resolve_secrets_path("~/seren/alpha/secrets.json")
+        assert got == fake_home / "seren" / "beta" / "secrets.json"
+
+    def test_empty_env_counts_as_unset(self, fake_home, monkeypatch):
+        monkeypatch.setenv(SECRETS_ENV, "")
+        got = resolve_secrets_path("~/seren/alpha/secrets.json")
+        assert got == fake_home / "seren" / "alpha" / "secrets.json"
+
+    def test_not_frozen_at_import(self, fake_home, monkeypatch):
+        """A bare load_token() honours an env var set AFTER import."""
+        secrets = fake_home / "seren" / "gamma" / "secrets.json"
+        secrets.parent.mkdir(parents=True)
+        secrets.write_text(json.dumps({"observatory_token": "gamma-tok"}))
         assert load_token() is None
+        monkeypatch.setenv(SECRETS_ENV, str(secrets))
+        assert load_token() == "gamma-tok"
 
 
 class TestConstantTimeEq:
@@ -117,6 +146,27 @@ class TestBearerMiddleware:
         c = TestClient(app_no_token, raise_server_exceptions=True)
         r = c.post("/mutate")
         assert r.status_code == 503
+
+    def test_interlock_message_names_the_resolved_path(self, tmp_path):
+        """The 503 tells the operator where to put the token. It must be the
+        file the observatory reads, not a hard-coded ~/.seren/secrets.json."""
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from seren_observatory.auth import BearerAuthMiddleware
+
+        where = tmp_path / "seren" / "alpha" / "secrets.json"
+        app = FastAPI()
+        app.add_middleware(BearerAuthMiddleware, expected_token=None,
+                           secrets_path=where)
+
+        @app.post("/mutate")
+        async def mutate():
+            return {"data": "changed"}
+
+        r = TestClient(app).post("/mutate")
+        assert r.status_code == 503
+        assert str(where) in r.json()["detail"]
+        assert "~/.seren/secrets.json" not in r.json()["detail"]
 
     def test_with_token_rejects_missing_auth(self, app_with_token):
         from starlette.testclient import TestClient

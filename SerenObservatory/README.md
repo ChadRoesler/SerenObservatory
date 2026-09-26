@@ -29,6 +29,13 @@ lot of power for an HTTP endpoint, so the observatory treats its auth token as a
   It is **not** a config field - you won't find it in the
   yaml, on purpose. Putting it there would add a second, weaker path to the
   one thing that gates rebooting your hardware.
+- The file's **location** can move (the token itself still can't): set
+  `SEREN_OBSERVATORY_SECRETS=/path/to/secrets.json` in the environment, or
+  `server.secrets_path` in the yaml. Env wins over the yaml; both win over the
+  default `~/.seren/secrets.json`. `~` is expanded. That's for per-install
+  roots (`~/seren/<install name>/...`), so two clusters on one host never
+  share a token. Same rules for the moved file: `{"observatory_token": "..."}`,
+  chmod 600.
 - **Until that token exists, the observatory fails CLOSED on anything that
   mutates.** Reads stay open (so monitoring still works on a fresh node), but
   every start/stop/restart/reboot returns `503` until you've provisioned a
@@ -84,7 +91,7 @@ curl localhost:7777/api/v1/system/version
 Everything else needs the bearer token:
 
 ```bash
-TOKEN=$(jq -r .observatory_token ~/.seren/secrets.json)
+TOKEN=$(jq -r .observatory_token ~/.seren/secrets.json)   # or wherever SEREN_OBSERVATORY_SECRETS / server.secrets_path points
 
 # What's on this node, and how's it doing?
 curl -H "Authorization: Bearer $TOKEN" localhost:7777/api/v1/system/node
@@ -122,14 +129,18 @@ See `seren-observatory.yaml.sample`. It follows the Seren convention (same shape
 SerenMemory and SerenMargin): a `server:` block, resolved `--config` →
 `$SEREN_AGENT_CONFIG` → `~/seren-observatory/seren-observatory.yaml` → built-in defaults.
 
-The yaml carries host/port **only** - the token is not here (see the
-interlock section above). Fields you might touch:
+The yaml carries host/port and *where* the secrets file is - the token itself
+is not here (see the interlock section above). Fields you might touch:
 
 - `server.host` (default `0.0.0.0` - the cluster-plane bind)
 - `server.port` (default 7777)
+- `server.secrets_path` (default `~/.seren/secrets.json`)
 
 Env vars override file values for systemd: `AGENT_HOST`/`AGENT_PORT`, or the
-namespaced `SEREN_AGENT_HOST`/`SEREN_AGENT_PORT`.
+namespaced `SEREN_AGENT_HOST`/`SEREN_AGENT_PORT`; `SEREN_OBSERVATORY_SECRETS`
+for the secrets file. The root page and the fail-closed `503` both name the
+secrets file the observatory actually resolved, so if they point somewhere you
+didn't expect, that's the path it's reading.
 
 ---
 

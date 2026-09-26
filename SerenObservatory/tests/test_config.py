@@ -65,6 +65,42 @@ def test_bearer_token_in_yaml_is_ignored(cfg_path, capsys):
     assert "ignored by design" in (captured.out + captured.err)
 
 
+def test_secrets_path_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("SEREN_AGENT_CONFIG", str(tmp_path / "nope.yaml"))
+    assert load_config().secrets_path == "~/.seren/secrets.json"
+
+
+def test_yaml_secrets_path(cfg_path):
+    """The LOCATION of the secrets file is a config key; the token is not."""
+    cfg_path.write_text("server:\n  secrets_path: ~/seren/alpha/secrets.json\n")
+    cfg = load_config()
+    assert cfg.secrets_path == "~/seren/alpha/secrets.json"
+
+
+def test_bad_secrets_path_value_falls_back(cfg_path, capsys):
+    cfg_path.write_text("server:\n  secrets_path: [not, a, path]\n  port: 8123\n")
+    cfg = load_config()
+    assert cfg.secrets_path == "~/.seren/secrets.json"
+    assert cfg.port == 8123
+    captured = capsys.readouterr()
+    assert "ignored bad value for 'secrets_path'" in (captured.out + captured.err)
+
+
+def test_bearer_token_note_names_the_configured_secrets_file(cfg_path, capsys, tmp_path):
+    """The 'token is ignored' note tells the operator where the token DOES
+    go - that has to be the configured file, even if it's listed after the
+    token in the yaml."""
+    where = tmp_path / "alpha-secrets.json"
+    cfg_path.write_text(
+        "server:\n"
+        "  bearer_token: nope\n"
+        f"  secrets_path: '{where}'\n"
+    )
+    load_config()
+    captured = capsys.readouterr()
+    assert str(where) in (captured.out + captured.err)
+
+
 def test_env_overrides_yaml(cfg_path, monkeypatch):
     cfg_path.write_text("server:\n  port: 9999\n")
     monkeypatch.setenv("AGENT_PORT", "5555")

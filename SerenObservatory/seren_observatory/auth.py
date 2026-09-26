@@ -1,9 +1,16 @@
 """
 Bearer-token auth middleware.
 
-Token lives at ~/.seren/secrets.json with {"observatory_token": "..."}, chmod 600.
+Token lives in a secrets file with {"observatory_token": "..."}, chmod 600.
 Written by the Starwright installer (--gen-token / --token, -GenToken / -Token)
 or by hand; there is no separate secrets tool.
+
+Where that file is (highest wins, see resolve_secrets_path):
+    1. $SEREN_OBSERVATORY_SECRETS
+    2. server.secrets_path in seren-observatory.yaml
+    3. ~/.seren/secrets.json  (the default, and every install before this knob)
+Only the LOCATION is configurable. The token itself still never goes in the
+yaml - see config.py.
 
 Skipped paths:
     /                              - root info page (links only, no service data)
@@ -36,7 +43,13 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-SECRETS_PATH = Path(os.path.expanduser("~")) / ".seren" / "secrets.json"
+# The secrets file's location is resolved at CALL time, never frozen at import.
+# 2026-09-25: installs are moving to per-install roots (~/seren/<install>/...)
+# so two clusters on one host - each with its own Lodestar + Observatory -
+# never share a token. A module constant computed at import could only ever
+# name the one shared ~/.seren/secrets.json.
+SECRETS_ENV = "SEREN_OBSERVATORY_SECRETS"
+DEFAULT_SECRETS_PATH = "~/.seren/secrets.json"
 
 # HTTP methods that don't change state. When no token is configured these
 # stay open (read-only introspection for monitoring/bootstrap); everything
@@ -58,17 +71,35 @@ PUBLIC_PATHS = frozenset({
 })
 
 
-def load_token() -> str | None:
-    """Load the observatory token from ~/.seren/secrets.json, or None if missing.
+def resolve_secrets_path(configured: str | os.PathLike[str] | None = None) -> Path:
+    """$SEREN_OBSERVATORY_SECRETS -> ``configured`` (the yaml's
+    server.secrets_path) -> ~/.seren/secrets.json, with ~ expanded.
+
+    Env wins so a unit file / launcher can pin one install's secrets without
+    editing its yaml. An EMPTY env value counts as unset - a blank
+    ``Environment=SEREN_OBSERVATORY_SECRETS=`` line must not point the
+    interlock at the working directory.
+    """
+    raw = os.getenv(SECRETS_ENV) or configured or DEFAULT_SECRETS_PATH
+    return Path(os.path.expanduser(os.fspath(raw)))
+
+
+def load_token(path: str | os.PathLike[str] | None = None) -> str | None:
+    """Load the observatory token from the secrets file, or None if missing.
+
+    ``path`` is the already-resolved secrets file (create_app passes
+    resolve_secrets_path(cfg.secrets_path)); with no argument it resolves from
+    the env var / default, so a bare call still honours $SEREN_OBSERVATORY_SECRETS.
 
     None means "auth is disabled" - the observatory will accept all requests. This
     is meant as a fallback for an install that was given no token;
     in production all installs should have a token.
     """
-    if not SECRETS_PATH.is_file():
+    secrets_path = Path(path) if path is not None else resolve_secrets_path()
+    if not secrets_path.is_file():
         return None
     try:
-        with open(SECRETS_PATH) as f:
+        with open(secrets_path) as f:
             data = json.load(f)
         token = data.get("observatory_token")
         if isinstance(token, str) and token:
@@ -82,9 +113,15 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
     """ASGI middleware that requires `Authorization: Bearer <token>` on
     every request EXCEPT those listed in PUBLIC_PATHS."""
 
-    def __init__(self, app: ASGIApp, *, expected_token: str | None) -> None:
+    def __init__(self, app: ASGIApp, *, expected_token: str | None,
+                 secrets_path: str | os.PathLike[str] | None = None) -> None:
         super().__init__(app)
         self._expected = expected_token
+        # Only used to TELL the operator where the token goes. It has to be
+        # the path load_token actually read, or the 503 sends them to write
+        # a file the observatory will never open.
+        self._secrets_path = (Path(secrets_path) if secrets_path is not None
+                              else resolve_secrets_path())
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
@@ -97,7 +134,7 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(
                     {"error": "unauthorized",
                      "detail": "no observatory token configured; service-management "
-                               "endpoints are disabled until ~/.seren/secrets.json "
+                               f"endpoints are disabled until {self._secrets_path} "
                                "holds observatory_token (re-run the installer with "
                                "--gen-token, or write the file by hand)"},
                     status_code=503,

@@ -10,9 +10,9 @@ who set up one service already knows how to set up this one:
 
 DELIBERATE EXCEPTION - the bearer token is NOT here. Unlike SerenMemory, the
 observatory's token is a SAFETY INTERLOCK, not a config knob: this plane can restart
-services and trigger a sudoers-backed reboot, so the token lives in
-~/.seren/secrets.json (chmod 600, written by the installer's --gen-token) and is loaded
-by auth.load_token(). The observatory fails CLOSED on mutating methods when no token
+services and trigger a sudoers-backed reboot, so the token lives in a secrets
+file (default ~/.seren/secrets.json, chmod 600, written by the installer's
+--gen-token) and is loaded by auth.load_token(). The observatory fails CLOSED on mutating methods when no token
 exists. Putting the token in a yaml field would add a second, lower-security
 path (yaml may be 644, may be committed) next to the deliberate secrets.json
 one - a security regression dressed as consistency. Follow-the-leader on
@@ -20,8 +20,15 @@ STRUCTURE (--config, server: block, resolution order); NOT on collapsing auth
 into config. (Observatory is the one service that binds the LAN by default; every sibling
 is loopback since seren-meninges 2.3.0, and this file says 0.0.0.0 on purpose.)
 
+What the yaml MAY carry is the secrets file's LOCATION - ``server.secrets_path``.
+A path is not a secret, and per-install roots (~/seren/<install>/...) need it:
+two clusters on one host must not share one ~/.seren/secrets.json. The env var
+$SEREN_OBSERVATORY_SECRETS beats it; auth.resolve_secrets_path owns that order.
+
 Precedence (highest wins):
-    1. Env vars  (AGENT_HOST/AGENT_PORT, and the SEREN_AGENT_* aliases)
+    1. Env vars  (AGENT_HOST/AGENT_PORT, and the SEREN_AGENT_* aliases;
+                  SEREN_OBSERVATORY_SECRETS for the secrets path, applied at
+                  resolve time by auth.resolve_secrets_path)
     2. YAML file (operator's standing config)
     3. Defaults  (0.0.0.0:7777 - the Seren cluster convention)
 
@@ -69,6 +76,10 @@ class ObservatoryConfig(BaseModel):
     # address, is what protects the mutating endpoints.
     host: str = "0.0.0.0"
     port: int = 7777
+    # WHERE the token file is - never the token. Kept as the raw string (~
+    # unexpanded) so it reads back as the operator wrote it; expansion and the
+    # env override happen in auth.resolve_secrets_path, at call time.
+    secrets_path: str = "~/.seren/secrets.json"
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
 
 
@@ -110,15 +121,14 @@ def _load_yaml_lenient(path: Path) -> dict[str, Any]:
 
 def _apply_server_overrides(cfg: ObservatoryConfig, server: dict[str, Any], *, source: str) -> None:
     """Apply per-key overrides; each key try/except'd so one bad value doesn't
-    sink the others. Only host/port are known - anything else is ignored with
-    a note (notably 'bearer_token', which is intentionally NOT honored here)."""
-    known = {"host", "port"}
+    sink the others. Only host/port/secrets_path are known - anything else is
+    ignored with a note (notably 'bearer_token', which is intentionally NOT
+    honored here)."""
+    known = {"host", "port", "secrets_path"}
+    saw_token = False
     for key, raw in server.items():
         if key == "bearer_token":
-            # Loud, specific note: the token is not a config field by design.
-            print("[seren-observatory] config: 'bearer_token' in the yaml is ignored "
-                  "by design - the observatory token lives in ~/.seren/secrets.json "
-                  "(the installer's --gen-token writes it). See config.py for why.")
+            saw_token = True
             continue
         if key not in known:
             print(f"[seren-observatory] config: ignoring unknown server key '{key}' from {source}")
@@ -129,6 +139,15 @@ def _apply_server_overrides(cfg: ObservatoryConfig, server: dict[str, Any], *, s
             cfg.__dict__.update(ObservatoryConfig.model_validate(current).__dict__)
         except Exception as e:
             print(f"[seren-observatory] config: ignored bad value for '{key}' from {source}: {e}")
+    if saw_token:
+        # Loud, specific note: the token is not a config field by design.
+        # Printed AFTER the loop so it names the secrets file this yaml
+        # actually resolves to, even when secrets_path comes after the token.
+        from .auth import resolve_secrets_path
+        print("[seren-observatory] config: 'bearer_token' in the yaml is ignored "
+              "by design - the observatory token lives in "
+              f"{resolve_secrets_path(cfg.secrets_path)} "
+              "(the installer's --gen-token writes it). See config.py for why.")
 
 
 def load_config(path: Optional[str] = None) -> ObservatoryConfig:

@@ -10,12 +10,14 @@ Run with:
 or via systemd / a launcher. Listens on 0.0.0.0:7777 by default.
 
 Config: host/port resolve via config.load_config() (defaults < yaml's server:
-block < env vars). The bearer token is loaded SEPARATELY from
-~/.seren/secrets.json by auth.load_token() - it's a safety interlock, not a
-config field. See config.py for why.
+block < env vars). The bearer token is loaded SEPARATELY from the secrets
+file (default ~/.seren/secrets.json; $SEREN_OBSERVATORY_SECRETS or the yaml's
+server.secrets_path move it) by auth.load_token() - it's a safety interlock,
+not a config field. See config.py for why.
 """
 from __future__ import annotations
 
+import html
 import os
 import logging
 from pathlib import Path
@@ -24,7 +26,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from . import __version__, manifests
-from .auth import BearerAuthMiddleware, load_token
+from .auth import BearerAuthMiddleware, load_token, resolve_secrets_path
 from .config import ObservatoryConfig, load_config
 from seren_sinew.request_log import RequestLoggingMiddleware
 from .service_routes import register_all_services
@@ -49,6 +51,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     # host/port; those are consumed by the caller that runs uvicorn, so the app
     # body doesn't need them - but we resolve it anyway so a future need (e.g.
     # surfacing the bind in the root page) has it on hand without another load.
+    # It also carries secrets_path, which the auth interlock below does use.
     cfg = cfg or load_config()
 
     app = FastAPI(
@@ -80,8 +83,13 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     #
     # FastAPI add_middleware adds in REVERSE order at runtime, so we add
     # auth FIRST (will run inner) and logging SECOND (will run outer).
-    token = load_token()
-    app.add_middleware(BearerAuthMiddleware, expected_token=token)
+    # Resolve the secrets file ONCE and hand the same path to the loader, the
+    # middleware's 503 message, and the root page - so what the operator is
+    # told to write is exactly what was read.
+    secrets_path = resolve_secrets_path(cfg.secrets_path)
+    token = load_token(secrets_path)
+    app.add_middleware(BearerAuthMiddleware, expected_token=token,
+                       secrets_path=secrets_path)
     app.add_middleware(
         RequestLoggingMiddleware,
         service_name="seren-observatory",
@@ -123,7 +131,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     async def root() -> str:
         node = manifests.load_node()
         host = (node or {}).get("hostname", "unknown")
-        auth_state = "configured" if token else "DISABLED (no token in ~/.seren/secrets.json)"
+        auth_state = "configured" if token else f"DISABLED (no token in {html.escape(str(secrets_path))})"
         return f"""<!doctype html>
 <html><head><title>seren-observatory - {host}</title></head>
 <body style="font-family: system-ui; max-width: 720px; margin: 2rem auto; padding: 0 1rem;">
@@ -153,7 +161,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
         # auth.PUBLIC_PATHS); its /api/v1/* fetches carry the token from the
         # shell's key modal. With no token provisioned the read-only glance
         # still works (safe GETs stay open); the action buttons fail closed
-        # (503) until ~/.seren/secrets.json exists - the deliberate interlock,
+        # (503) until the secrets file exists - the deliberate interlock,
         # surfaced in the UI instead of hidden.
         return render_from_dir(
             Path(__file__).resolve().parent / "viewer" / "ui",

@@ -13,18 +13,26 @@
 #  ~/seren-observatory/seren-observatory.yaml -> defaults. Same shape as SerenMemory.
 #
 #  Env overrides (handy for systemd):  AGENT_HOST/AGENT_PORT, or the
-#  namespaced SEREN_AGENT_HOST / SEREN_AGENT_PORT.
+#  namespaced SEREN_AGENT_HOST / SEREN_AGENT_PORT; SEREN_OBSERVATORY_SECRETS
+#  for secrets_path below.
 #
 #  ── ON THE TOKEN (read this) ───────────────────────────────────────────
 #  There is deliberately NO bearer_token field here. The observatory's token is a
 #  SAFETY INTERLOCK, not a config knob: this plane can restart services and
-#  trigger a sudoers-backed reboot. The token lives in ~/.seren/secrets.json
-#  (chmod 600, written by seren-secrets.sh) and is loaded separately. Until
-#  it exists, the observatory fails CLOSED on service-management endpoints (reads
+#  trigger a sudoers-backed reboot. The token lives in a secrets file,
+#  {"observatory_token": "..."} (chmod 600, written by the installer's
+#  --gen-token / --token, or by hand) and is loaded separately. Until it
+#  exists, the observatory fails CLOSED on service-management endpoints (reads
 #  stay open for monitoring). Putting the token in this yaml would add a
-#  second, lower-security path - so we don't. Run seren-secrets.sh to set it.
+#  second, lower-security path - so we don't.
+#
+#  What this yaml MAY say is WHERE that file is (server.secrets_path). A path
+#  is not a secret. $SEREN_OBSERVATORY_SECRETS beats it; both beat the
+#  default ~/.seren/secrets.json. Per-install roots use it so two clusters on
+#  one host never share a token.
 # ═══════════════════════════════════════════════════════════════════════
 
 server:
   host: 0.0.0.0    # reachable across the trusted LAN (cluster plane)
   port: 7777
+  # secrets_path: ~/seren/<install name>/secrets.json   # default ~/.seren/secrets.json

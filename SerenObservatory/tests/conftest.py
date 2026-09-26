@@ -41,6 +41,14 @@ def offline_update_checks(monkeypatch):
     monkeypatch.setattr(UpdateChecker, "_fetch_from_index", _no_network)
 
 
+@pytest.fixture(autouse=True)
+def no_secrets_env(monkeypatch):
+    """$SEREN_OBSERVATORY_SECRETS beats every other secrets location, so one
+    left set in the shell running pytest would silently repoint every auth
+    test at a real token file. Tests that want it set it themselves."""
+    monkeypatch.delenv("SEREN_OBSERVATORY_SECRETS", raising=False)
+
+
 # ── fake home + manifest layout ──────────────────────────────────────────
 
 @pytest.fixture()
@@ -50,8 +58,11 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     seren_dir.mkdir()
     (seren_dir / "services").mkdir()
 
-    # Patch os.path.expanduser so Path("~") resolves to tmp_path
+    # Patch os.path.expanduser so Path("~") resolves to tmp_path. USERPROFILE
+    # too: on Windows expanduser ignores HOME, so without it the default
+    # secrets path (~/.seren/secrets.json) would read the REAL profile's file.
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     # Patch manifests module-level paths directly
     import seren_observatory.manifests as m

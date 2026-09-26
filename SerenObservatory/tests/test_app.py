@@ -65,6 +65,50 @@ class TestAuthOnProtectedRoutes:
         assert body["total"] == 0
 
 
+class TestSecretsPathWiring:
+    """create_app reads the token from the CONFIGURED secrets file and tells
+    the operator that same path when it is missing - per-install roots
+    (~/seren/<install>/secrets.json) would be useless otherwise."""
+
+    async def _post_mutation(self, app):
+        # A service that doesn't exist, NOT /system/reboot: if the interlock
+        # ever regressed this should 404, not schedule a real reboot.
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            return (await c.post("/api/v1/service/no-such-service/restart"),
+                    await c.get("/"))
+
+    async def test_configured_path_arms_auth(self, fake_home):
+        import json
+        from seren_observatory.config import ObservatoryConfig
+        where = fake_home / "seren" / "alpha" / "secrets.json"
+        where.parent.mkdir(parents=True)
+        where.write_text(json.dumps({"observatory_token": "alpha-tok"}))
+        app = create_app(ObservatoryConfig(secrets_path="~/seren/alpha/secrets.json"))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            assert (await c.get("/api/v1/system/services")).status_code == 401
+            r = await c.get("/api/v1/system/services",
+                            headers={"Authorization": "Bearer alpha-tok"})
+            assert r.status_code == 200
+
+    async def test_missing_file_names_the_configured_path(self, fake_home):
+        from seren_observatory.config import ObservatoryConfig
+        where = fake_home / "seren" / "alpha" / "secrets.json"
+        app = create_app(ObservatoryConfig(secrets_path=str(where)))
+        r, root = await self._post_mutation(app)
+        assert r.status_code == 503
+        assert str(where) in r.json()["detail"]
+        assert str(where) in root.text
+
+    async def test_env_beats_configured_path(self, fake_home, monkeypatch):
+        from seren_observatory.config import ObservatoryConfig
+        via_env = fake_home / "seren" / "beta" / "secrets.json"
+        monkeypatch.setenv("SEREN_OBSERVATORY_SECRETS", str(via_env))
+        app = create_app(ObservatoryConfig(secrets_path="~/seren/alpha/secrets.json"))
+        r, _ = await self._post_mutation(app)
+        assert r.status_code == 503
+        assert str(via_env) in r.json()["detail"]
+
+
 class TestVersionString:
     def test_version_is_string(self):
         from seren_observatory import __version__

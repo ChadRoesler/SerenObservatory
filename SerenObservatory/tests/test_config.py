@@ -86,6 +86,27 @@ def test_bad_secrets_path_value_falls_back(cfg_path, capsys):
     assert "ignored bad value for 'secrets_path'" in (captured.out + captured.err)
 
 
+def test_manifests_dir_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("SEREN_AGENT_CONFIG", str(tmp_path / "nope.yaml"))
+    assert load_config().manifests_dir == "~/.seren/services"
+
+
+def test_yaml_manifests_dir(cfg_path):
+    """Per-install roots point the roster at <root>/manifests."""
+    cfg_path.write_text("server:\n  manifests_dir: ~/seren/alpha/manifests\n")
+    cfg = load_config()
+    assert cfg.manifests_dir == "~/seren/alpha/manifests"
+
+
+def test_bad_manifests_dir_value_falls_back(cfg_path, capsys):
+    cfg_path.write_text("server:\n  manifests_dir: [not, a, path]\n  port: 8123\n")
+    cfg = load_config()
+    assert cfg.manifests_dir == "~/.seren/services"
+    assert cfg.port == 8123
+    captured = capsys.readouterr()
+    assert "ignored bad value for 'manifests_dir'" in (captured.out + captured.err)
+
+
 def test_bearer_token_note_names_the_configured_secrets_file(cfg_path, capsys, tmp_path):
     """The 'token is ignored' note tells the operator where the token DOES
     go - that has to be the configured file, even if it's listed after the

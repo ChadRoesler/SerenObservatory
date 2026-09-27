@@ -13,7 +13,9 @@ work on each machine.
 
 It's manifest-driven - it reads `~/.seren/services/*.json` to learn what
 lives on its node, and dispatches lifecycle actions from there. Drop a new
-service manifest, the observatory knows about it. No code change.
+service manifest, the observatory knows about it. No code change. (An
+install under a Starwright root reads `<root>/manifests/*.json` instead -
+see `server.manifests_dir` under Config.)
 
 ---
 
@@ -73,8 +75,8 @@ cp seren-observatory.yaml.sample seren-observatory.yaml
 python -m seren_observatory --config seren-observatory.yaml
 ```
 
-Defaults: `0.0.0.0:7777`. Reads its node + service manifests from
-`~/.seren/`.
+Defaults: `0.0.0.0:7777`. Reads `~/.seren/node.json` and the service
+manifests in `~/.seren/services/`.
 
 ---
 
@@ -129,18 +131,33 @@ See `seren-observatory.yaml.sample`. It follows the Seren convention (same shape
 SerenMemory and SerenMargin): a `server:` block, resolved `--config` →
 `$SEREN_AGENT_CONFIG` → `~/seren-observatory/seren-observatory.yaml` → built-in defaults.
 
-The yaml carries host/port and *where* the secrets file is - the token itself
-is not here (see the interlock section above). Fields you might touch:
+The yaml carries host/port, *where* the secrets file is - the token itself
+is not here (see the interlock section above) - and where the service
+manifests are. Fields you might touch:
 
 - `server.host` (default `0.0.0.0` - the cluster-plane bind)
 - `server.port` (default 7777)
 - `server.secrets_path` (default `~/.seren/secrets.json`)
+- `server.manifests_dir` (default `~/.seren/services`) - this install's
+  roster: the observatory lists, starts and reclaims the `*.json` in it.
+  Starwright sets it to `<install root>/manifests` so two installs on one host
+  keep separate rosters. When it's moved, `~/.seren/services` is still read
+  too, as the **box** roster: the GPU daemons the node installers write there
+  (whisper, llama, kokoro) belong to the box, so every install's observatory
+  on the host lists them, and reclaim from any of them stops them - the GPU is
+  the box's. A name in both rosters is the install's. Each manifest in
+  `/api/v1/system/services` carries `_roster: "install"` or `"box"`.
+  `node.json` doesn't move either: a node is one box, so that stays at
+  `~/.seren/node.json`.
 
 Env vars override file values for systemd: `AGENT_HOST`/`AGENT_PORT`, or the
 namespaced `SEREN_AGENT_HOST`/`SEREN_AGENT_PORT`; `SEREN_OBSERVATORY_SECRETS`
-for the secrets file. The root page and the fail-closed `503` both name the
+for the secrets file; `SEREN_OBSERVATORY_MANIFESTS` for the roster. `~` is
+expanded in both paths. The root page and the fail-closed `503` both name the
 secrets file the observatory actually resolved, so if they point somewhere you
-didn't expect, that's the path it's reading.
+didn't expect, that's the path it's reading. The root page names the roster
+directory the same way - if a service you installed isn't listed, check that
+line first.
 
 ---
 

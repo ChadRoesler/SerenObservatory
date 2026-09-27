@@ -25,10 +25,20 @@ A path is not a secret, and per-install roots (~/seren/<install>/...) need it:
 two clusters on one host must not share one ~/.seren/secrets.json. The env var
 $SEREN_OBSERVATORY_SECRETS beats it; auth.resolve_secrets_path owns that order.
 
+The services roster's location is config for the same reason -
+``server.manifests_dir`` (default ~/.seren/services), beaten by
+$SEREN_OBSERVATORY_MANIFESTS; manifests.resolve_manifests_dir owns that order.
+Two installs on one host must not list and restart each other's services.
+(~/.seren/services is still read alongside a moved roster, as the box's own -
+the node's GPU daemons live there. See manifests.rosters.)
+node.json is not movable: it describes the box, not an install.
+
 Precedence (highest wins):
     1. Env vars  (AGENT_HOST/AGENT_PORT, and the SEREN_AGENT_* aliases;
                   SEREN_OBSERVATORY_SECRETS for the secrets path, applied at
-                  resolve time by auth.resolve_secrets_path)
+                  resolve time by auth.resolve_secrets_path;
+                  SEREN_OBSERVATORY_MANIFESTS for the roster, applied at
+                  resolve time by manifests.resolve_manifests_dir)
     2. YAML file (operator's standing config)
     3. Defaults  (0.0.0.0:7777 - the Seren cluster convention)
 
@@ -80,6 +90,9 @@ class ObservatoryConfig(BaseModel):
     # unexpanded) so it reads back as the operator wrote it; expansion and the
     # env override happen in auth.resolve_secrets_path, at call time.
     secrets_path: str = "~/.seren/secrets.json"
+    # WHERE the services/*.json roster is. Raw string for the same reason;
+    # the env override and expansion happen in manifests.resolve_manifests_dir.
+    manifests_dir: str = "~/.seren/services"
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
 
 
@@ -121,10 +134,10 @@ def _load_yaml_lenient(path: Path) -> dict[str, Any]:
 
 def _apply_server_overrides(cfg: ObservatoryConfig, server: dict[str, Any], *, source: str) -> None:
     """Apply per-key overrides; each key try/except'd so one bad value doesn't
-    sink the others. Only host/port/secrets_path are known - anything else is
-    ignored with a note (notably 'bearer_token', which is intentionally NOT
-    honored here)."""
-    known = {"host", "port", "secrets_path"}
+    sink the others. Only host/port/secrets_path/manifests_dir are known -
+    anything else is ignored with a note (notably 'bearer_token', which is
+    intentionally NOT honored here)."""
+    known = {"host", "port", "secrets_path", "manifests_dir"}
     saw_token = False
     for key, raw in server.items():
         if key == "bearer_token":

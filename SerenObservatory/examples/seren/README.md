@@ -10,6 +10,13 @@ That's the whole mechanism.
     <name>.json          one per installed service
 ```
 
+An install under a Starwright root keeps its `services/` roster at
+`<root>/manifests/` instead (`server.manifests_dir` in the yaml, or
+`$SEREN_OBSERVATORY_MANIFESTS`). `services/` here is still read as the box
+roster - the node's GPU daemons live in it, shared by every install's
+Observatory on the box - and `node.json` stays here either way, because it
+describes the box.
+
 **If a service isn't listed here, Observatory does not know it exists.** It
 reports these files and nothing else — no directory probing, no port
 scanning, no guessing. A node can be running six healthy services and look

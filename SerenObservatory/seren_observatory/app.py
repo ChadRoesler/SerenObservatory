@@ -13,7 +13,9 @@ Config: host/port resolve via config.load_config() (defaults < yaml's server:
 block < env vars). The bearer token is loaded SEPARATELY from the secrets
 file (default ~/.seren/secrets.json; $SEREN_OBSERVATORY_SECRETS or the yaml's
 server.secrets_path move it) by auth.load_token() - it's a safety interlock,
-not a config field. See config.py for why.
+not a config field. See config.py for why. The services roster (default
+~/.seren/services; $SEREN_OBSERVATORY_MANIFESTS or server.manifests_dir move
+it) is resolved per request by manifests.resolve_manifests_dir.
 """
 from __future__ import annotations
 
@@ -51,8 +53,10 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     # host/port; those are consumed by the caller that runs uvicorn, so the app
     # body doesn't need them - but we resolve it anyway so a future need (e.g.
     # surfacing the bind in the root page) has it on hand without another load.
-    # It also carries secrets_path, which the auth interlock below does use.
+    # It also carries secrets_path, which the auth interlock below does use,
+    # and manifests_dir, which every roster read does.
     cfg = cfg or load_config()
+    manifests.configure(cfg.manifests_dir)
 
     app = FastAPI(
         title="seren-observatory",
@@ -132,6 +136,11 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
         node = manifests.load_node()
         host = (node or {}).get("hostname", "unknown")
         auth_state = "configured" if token else f"DISABLED (no token in {html.escape(str(secrets_path))})"
+        # Resolved here, not captured at startup, so the page names the
+        # directories the roster is actually read from on this request.
+        roster = " + ".join(html.escape(f"{p}/*.json") + f" ({label})"
+                            for label, p in manifests.rosters())
+        node_file = html.escape(str(manifests.node_path()))
         return f"""<!doctype html>
 <html><head><title>seren-observatory - {host}</title></head>
 <body style="font-family: system-ui; max-width: 720px; margin: 2rem auto; padding: 0 1rem;">
@@ -150,7 +159,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
   <li>/api/v1/system/{{node, services, health, reclaim}} - auth required</li>
   <li>/api/v1/service/{{name}}/{{start, stop, restart, health, status, logs, manifest}} - auth required</li>
 </ul>
-<p>Source of truth: ~/.seren/services/*.json + ~/.seren/node.json</p>
+<p>Source of truth: {roster} + {node_file}</p>
 </body></html>"""
 
     # The Observatory glance - on the shared SerenMeninges baseplate.
@@ -177,7 +186,8 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     # Service routes: one universal router that discovers manifests per
     # request, plus the service-specific handlers (code, not installs).
     mounted = register_all_services(app)
-    print(f"[seren-observatory] service verbs discover manifests per request; "
+    print(f"[seren-observatory] service verbs discover manifests per request "
+          f"from {' + '.join(str(p) for _, p in manifests.rosters())}; "
           f"specific handlers mounted for: {mounted}")
 
     return app

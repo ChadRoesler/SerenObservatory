@@ -256,3 +256,65 @@ def test_docs_are_public_but_the_api_is_not(fake_home, monkeypatch):
     c = TestClient(create_app(ObservatoryConfig()))
     assert c.get("/openapi.json").status_code == 200
     assert c.get("/api/v1/system/services").status_code == 401
+
+
+# ── pid_file port health: the manifest's own health endpoint first ──────
+
+@pytest.fixture()
+def probes(monkeypatch):
+    """Record every URL probed; answer ok only for the URLs in `.up`."""
+    class Probes(list):
+        up: set = set()
+    seen = Probes()
+
+    async def fake_probe(url, timeout=2.0):
+        seen.append(url)
+        if url in seen.up:
+            return {"ok": True, "status_code": 200, "latency_ms": 1}
+        return {"ok": False, "error": "refused"}
+    monkeypatch.setattr(lifecycle, "_http_probe", fake_probe)
+    return seen
+
+
+async def test_pid_health_tries_health_url_first(probes):
+    probes.up = {"http://127.0.0.1:8090/v1/models"}
+    m = {"service": "llama", "service_type": "pid_file", "port": 8090,
+         "health_url": "http://127.0.0.1:8090/v1/models"}
+    r = await lifecycle._pid_port_health(m)
+    assert r["ok"] and r["probed_path"] == "/v1/models"
+    assert probes == ["http://127.0.0.1:8090/v1/models"]
+
+
+async def test_pid_health_uses_health_path_before_the_fallbacks(probes):
+    """What nodes/ writes: whisper says health_path "/"."""
+    probes.up = {"http://127.0.0.1:8081/"}
+    m = {"service": "whisper", "service_type": "pid_file", "port": 8081, "health_path": "/"}
+    r = await lifecycle._pid_port_health(m)
+    assert r["ok"] and r["probed_path"] == "/"
+    assert probes == ["http://127.0.0.1:8081/"]
+
+
+async def test_pid_health_falls_back_when_the_manifests_endpoint_fails(probes):
+    probes.up = {"http://127.0.0.1:8880/"}
+    m = {"service": "kokoro", "service_type": "pid_file", "port": 8880,
+         "health_url": "http://127.0.0.1:8880/nope", "health_path": "/also-nope"}
+    r = await lifecycle._pid_port_health(m)
+    assert r["ok"] and r["probed_path"] == "/"
+    assert probes == ["http://127.0.0.1:8880/nope", "http://127.0.0.1:8880/also-nope",
+                      "http://127.0.0.1:8880/health", "http://127.0.0.1:8880/"]
+
+
+async def test_pid_health_probes_each_url_once(probes):
+    """llama and kokoro say health_path "/health" - the fallback's own first
+    try. A down service must not be probed there twice."""
+    m = {"service": "llama", "service_type": "pid_file", "port": 8090, "health_path": "/health"}
+    r = await lifecycle._pid_port_health(m)
+    assert not r["ok"]
+    assert probes == ["http://127.0.0.1:8090/health", "http://127.0.0.1:8090/"]
+
+
+async def test_pid_health_without_manifest_hints_is_unchanged(probes):
+    probes.up = {"http://127.0.0.1:8080/health"}
+    r = await lifecycle._pid_port_health({"service": "x", "port": 8080})
+    assert r["ok"] and r["probed_path"] == "/health"
+    assert probes == ["http://127.0.0.1:8080/health"]

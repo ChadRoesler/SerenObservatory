@@ -109,6 +109,55 @@ class TestSecretsPathWiring:
         assert str(via_env) in r.json()["detail"]
 
 
+class TestManifestsDirWiring:
+    """create_app points every roster read at the CONFIGURED manifests_dir,
+    so two installs on one host each see only their own services."""
+
+    @staticmethod
+    def _roster(fake_home, install, *names):
+        import json
+        d = fake_home / "seren" / install / "manifests"
+        d.mkdir(parents=True)
+        for n in names:
+            (d / f"{n}.json").write_text(json.dumps(
+                {"schema_version": 2, "service": n, "service_type": "library", "port": 0}))
+        return d
+
+    async def _get(self, app, path):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            return await c.get(path)
+
+    async def test_configured_dir_is_the_roster(self, fake_home, pid_service_manifest):
+        from seren_observatory.config import ObservatoryConfig
+        self._roster(fake_home, "alpha", "coral")
+        app = create_app(ObservatoryConfig(manifests_dir="~/seren/alpha/manifests"))
+        body = (await self._get(app, "/api/v1/system/services")).json()
+        # alpha's coral from the install roster, and the box's llama from
+        # ~/.seren/services - each saying where it came from.
+        assert sorted(body["services"]) == ["coral", "llama"]
+        assert body["services"]["coral"]["manifest"]["_roster"] == "install"
+        assert body["services"]["llama"]["manifest"]["_roster"] == "box"
+        assert (await self._get(app, "/api/v1/service/coral/manifest")).status_code == 200
+
+    async def test_env_beats_configured_dir(self, fake_home, monkeypatch):
+        from seren_observatory.config import ObservatoryConfig
+        self._roster(fake_home, "alpha", "coral")
+        beta = self._roster(fake_home, "beta", "kokoro")
+        monkeypatch.setenv("SEREN_OBSERVATORY_MANIFESTS", str(beta))
+        app = create_app(ObservatoryConfig(manifests_dir="~/seren/alpha/manifests"))
+        body = (await self._get(app, "/api/v1/system/services")).json()
+        assert list(body["services"]) == ["kokoro"]
+
+    async def test_root_page_names_the_roster(self, fake_home):
+        from seren_observatory.config import ObservatoryConfig
+        where = self._roster(fake_home, "alpha")
+        app = create_app(ObservatoryConfig(manifests_dir=str(where)))
+        root = await self._get(app, "/")
+        assert str(where) in root.text
+        assert str(fake_home / ".seren" / "services") in root.text
+        assert str(fake_home / ".seren" / "node.json") in root.text
+
+
 class TestVersionString:
     def test_version_is_string(self):
         from seren_observatory import __version__

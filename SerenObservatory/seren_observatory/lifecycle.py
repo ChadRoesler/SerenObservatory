@@ -33,6 +33,7 @@ import asyncio
 from collections import deque
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -216,8 +217,8 @@ def _pid_read(manifest: dict[str, Any]) -> int | None:
 
     Falls back to the standard ~/seren-logs/<name>.pid path if the manifest
     doesn't explicitly declare pid_path. Same convention as the start/stop
-    script fallbacks - most service manifests rely on the implicit pattern
-    rather than declaring every path explicitly.
+    script fallbacks - for manifests that predate explicit paths (see
+    _pid_start).
     """
     pid_path = manifest.get("pid_path")
     if not pid_path:
@@ -240,10 +241,11 @@ def _pid_read(manifest: dict[str, Any]) -> int | None:
 
 def _pid_start(manifest: dict[str, Any]) -> dict[str, Any]:
     # Conventional fallback: ~/start_<name>.sh if the manifest doesn't
-    # name an explicit path. This matches common.sh's convention - most
-    # services (llama, kokoro, comfy) don't list start_script in their
-    # manifest because the path is implicit. Only whisper happens to be
-    # explicit. Either way works.
+    # name an explicit path - common.sh's convention. As of 27 Sept 2026
+    # Starwright's node installers write explicit start_script, stop_script
+    # and pid_path for whisper, llama and kokoro, so the fallback is for
+    # manifests written before that (and anything hand-authored). Either way
+    # works; an explicit path always wins.
     start_script = manifest.get("start_script")
     if not start_script:
         name = manifest.get("service")
@@ -311,16 +313,34 @@ def _pid_stop(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _pid_port_health(manifest: dict[str, Any]) -> dict[str, Any]:
-    """HTTP-probe the service's port. Tries /health, falls back to /."""
+    """HTTP-probe the service's port. Tries what the manifest names first -
+    health_url (setup-seren-service.sh writes it), then health_path on the
+    port (the node installers write it: whisper "/", llama and kokoro
+    "/health") - and falls back to /health, then /.
+
+    The manifest's word used to be ignored here for pid_file services, so a
+    daemon whose health lived somewhere else read as degraded while the
+    manifest said exactly where to look.
+    """
     port = manifest.get("port", 0)
     if port <= 0:
         return {"ok": False, "reason": "library-mode (no port)"}
 
-    last_err = None
+    urls: list[str] = []
+    if manifest.get("health_url"):
+        urls.append(manifest["health_url"])
+    health_path = manifest.get("health_path")
+    if health_path:
+        urls.append(f"http://127.0.0.1:{port}/{str(health_path).lstrip('/')}")
     for path in ("/health", "/"):
-        result = await _http_probe(f"http://127.0.0.1:{port}{path}")
+        urls.append(f"http://127.0.0.1:{port}{path}")
+
+    last_err = None
+    for url in dict.fromkeys(urls):   # ordered, each probed once
+        result = await _http_probe(url)
         if result.get("ok"):
-            return {**result, "probed_path": path}
+            return {**result, "probed_path": urlsplit(url).path or "/",
+                    "probed_url": url}
         last_err = result.get("error", "non-2xx response")
     return {"ok": False, "error": last_err}
 
@@ -1123,9 +1143,9 @@ async def probe_port(manifest: dict[str, Any]) -> dict[str, Any]:
     """Probe the service's port for a quick health check.
 
     Used by service_routes.py's /health endpoint - a lighter-weight check
-    than full status() which also reads memory/cpu. Service-type aware:
-    falls back to the manifest's health_url for systemd/docker services
-    if specified, otherwise hits /health then / on the declared port.
+    than full status() which also reads memory/cpu. Uses the manifest's
+    health_url if it has one, otherwise _pid_port_health (health_path, then
+    /health, then / on the declared port).
 
     Library-mode services should be filtered out by the caller (no port).
     """

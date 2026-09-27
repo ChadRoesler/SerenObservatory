@@ -8,15 +8,17 @@ Universal verbs (live on every service that's installed):
     GET    /health             - quick port probe (or library-mode short-circuit)
     GET    /status             - pid + memory + uptime + port health
     GET    /logs?lines=N       - tail of ~/seren-logs/<name>.log
-    GET    /manifest           - the raw ~/.seren/services/<name>.json
+    GET    /manifest           - the raw <name>.json from the roster
+                                  (~/.seren/services unless manifests_dir
+                                  moves it - see manifests.py)
 
 Service-specific verbs (live only when a handler module exists for the
 service): see seren_observatory/services/<name>.py for what each exposes.
 
 DISCOVERED PER REQUEST, NOT AT STARTUP. The universal verbs are ONE router
 with `{name}` as a path parameter, and the manifest is loaded when the
-request arrives. That is what makes "drop a manifest in ~/.seren/services/
-and it's live" true: the manifests docstring promised it and
+request arrives. That is what makes "drop a manifest in the roster
+(~/.seren/services/) and it's live" true: the manifests docstring promised it and
 /system/services delivered it, but the old code built one router per
 installed service at boot, so a service installed afterwards was LISTED
 and yet every lifecycle verb for it 404'd until the observatory restarted.

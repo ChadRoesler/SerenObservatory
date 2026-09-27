@@ -49,11 +49,22 @@ def no_secrets_env(monkeypatch):
     monkeypatch.delenv("SEREN_OBSERVATORY_SECRETS", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def no_manifests_override(monkeypatch):
+    """Same for the roster: $SEREN_OBSERVATORY_MANIFESTS in the shell would
+    repoint every test at a real install's services. create_app also records
+    the yaml's manifests_dir on the module, so one test's app must not leave
+    it set for the next."""
+    import seren_observatory.manifests as m
+    monkeypatch.delenv("SEREN_OBSERVATORY_MANIFESTS", raising=False)
+    monkeypatch.setattr(m, "_configured_dir", None)
+
+
 # ── fake home + manifest layout ──────────────────────────────────────────
 
 @pytest.fixture()
 def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect HOME and the manifests module to a temp directory tree."""
+    """Redirect HOME to a temp directory tree with an empty ~/.seren/services."""
     seren_dir = tmp_path / ".seren"
     seren_dir.mkdir()
     (seren_dir / "services").mkdir()
@@ -64,12 +75,8 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
-    # Patch manifests module-level paths directly
-    import seren_observatory.manifests as m
-    monkeypatch.setattr(m, "HOME", tmp_path)
-    monkeypatch.setattr(m, "MANIFEST_DIR", seren_dir)
-    monkeypatch.setattr(m, "SERVICES_DIR", seren_dir / "services")
-
+    # Nothing to patch in the manifests module: the roster and node.json are
+    # both expanded from ~ per call, so the env above is enough.
     return tmp_path
 
 

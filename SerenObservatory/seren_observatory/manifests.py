@@ -1,5 +1,21 @@
 """
-~/.seren/{node,services/*}.json loader.
+~/.seren/node.json + services/*.json loader.
+
+Where the services roster is (highest wins, see resolve_manifests_dir):
+    1. $SEREN_OBSERVATORY_MANIFESTS
+    2. server.manifests_dir in seren-observatory.yaml
+    3. ~/.seren/services  (the default, and every install before this knob)
+node.json is NOT movable: a node is one box, however many installs it holds,
+so it stays at ~/.seren/node.json.
+
+TWO ROSTERS when the install's is moved (see rosters): the install roster
+above, plus the BOX roster ~/.seren/services. The box roster is where the
+node installers put the GPU daemons (whisper, llama, kokoro) - they belong to
+the box the way node.json does, so every install's Observatory on the host
+lists them, and reclaim from any of them stops them (right: the GPU is the
+box's). On a name clash the install roster wins. Each loaded manifest carries
+``_roster``: "install" or "box", so /system/services says which it came from.
+When both resolve to one directory it is read once, as "box".
 
 Single source of truth for "what's installed on this NODE" — Jetson, Spark,
 NUC or anything else running an Observatory. Replaces the hardcoded SERVICES
@@ -59,9 +75,44 @@ import os
 from pathlib import Path
 from typing import Any
 
-HOME = Path(os.path.expanduser("~"))
-MANIFEST_DIR = HOME / ".seren"
-SERVICES_DIR = MANIFEST_DIR / "services"
+# The roster's location is resolved at CALL time, never frozen at import - the
+# same shape as auth.resolve_secrets_path. Design note: Starwright
+# installs under a root (~/seren/<install>/...), and two named installs on one
+# host each run an Observatory. A directory frozen at import could only ever
+# name the one shared ~/.seren/services, so each would list - and restart, and
+# reclaim - the other's services.
+MANIFESTS_ENV = "SEREN_OBSERVATORY_MANIFESTS"
+DEFAULT_MANIFESTS_DIR = "~/.seren/services"
+# Per box, not per install - see the module docstring.
+NODE_PATH = "~/.seren/node.json"
+
+# The yaml's server.manifests_dir, handed over by create_app. Module state
+# rather than an argument because the roster is loaded from a dozen request
+# handlers (routes, reclaim, the per-service modules) that have no config in
+# hand, and one Observatory process serves exactly one install.
+_configured_dir: str | None = None
+
+
+def configure(manifests_dir: str | os.PathLike[str] | None) -> None:
+    """Record the yaml's server.manifests_dir (create_app calls this). It is
+    stored raw; the env override and ~ expansion still happen per call."""
+    global _configured_dir
+    _configured_dir = os.fspath(manifests_dir) if manifests_dir else None
+
+
+def resolve_manifests_dir(configured: str | os.PathLike[str] | None = None) -> Path:
+    """$SEREN_OBSERVATORY_MANIFESTS -> ``configured`` (or the value create_app
+    recorded from the yaml's server.manifests_dir) -> ~/.seren/services, with
+    ~ expanded.
+
+    Env wins so a unit file / launcher can pin one install's roster without
+    editing its yaml. An EMPTY env value counts as unset - a blank
+    ``Environment=SEREN_OBSERVATORY_MANIFESTS=`` line must not point the
+    roster at the working directory.
+    """
+    raw = (os.getenv(MANIFESTS_ENV) or configured or _configured_dir
+           or DEFAULT_MANIFESTS_DIR)
+    return Path(os.path.expanduser(os.fspath(raw)))
 
 # Bump when we add a field that older observatorys would mishandle. service_type
 # was added at v2 - but we default missing values to "pid_file" so v1
@@ -74,9 +125,15 @@ SCHEMA_VERSION = 2
 SERVICE_TYPES = {"pid_file", "library", "systemd", "docker_compose"}
 
 
+def node_path() -> Path:
+    """~/.seren/node.json, expanded per call like the roster (so a test's or a
+    service user's HOME is the one that counts)."""
+    return Path(os.path.expanduser(NODE_PATH))
+
+
 def load_node() -> dict[str, Any] | None:
     """Load ~/.seren/node.json. Returns None if missing or schema-incompatible."""
-    path = MANIFEST_DIR / "node.json"
+    path = node_path()
     if not path.is_file():
         return None
     try:
@@ -89,22 +146,53 @@ def load_node() -> dict[str, Any] | None:
     return data
 
 
-def load_services() -> dict[str, dict[str, Any]]:
-    """Load all ~/.seren/services/*.json manifests. Returns {name: manifest}."""
-    services: dict[str, dict[str, Any]] = {}
-    if not SERVICES_DIR.is_dir():
-        return services
+def _same_dir(a: Path, b: Path) -> bool:
+    # realpath + normcase: a trailing slash, a symlink or (on Windows) a
+    # different case must not make one directory read - and listed - twice.
+    return (os.path.normcase(os.path.realpath(a))
+            == os.path.normcase(os.path.realpath(b)))
 
-    for path in sorted(SERVICES_DIR.glob("*.json")):
-        try:
-            with open(path) as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+
+def rosters() -> list[tuple[str, Path]]:
+    """The directories load_services reads, highest priority first, as
+    (label, path). Just [("box", ~/.seren/services)] when the install roster
+    is the default; [("install", <configured>), ("box", ~/.seren/services)]
+    when it has been moved.
+
+    Design note: box-level GPU daemons are written by the node
+    installers into ~/.seren/services whatever install is on the box. Moving
+    an install's roster must not hide them from that install's Observatory.
+    """
+    install = resolve_manifests_dir()
+    box = Path(os.path.expanduser(DEFAULT_MANIFESTS_DIR))
+    if _same_dir(install, box):
+        return [("box", box)]
+    return [("install", install), ("box", box)]
+
+
+def load_services() -> dict[str, dict[str, Any]]:
+    """Load every *.json in every roster (see rosters). Returns {name:
+    manifest}, each manifest marked with the ``_roster`` it came from; a name
+    already loaded from a higher roster is not replaced by a lower one."""
+    services: dict[str, dict[str, Any]] = {}
+    for label, services_dir in rosters():
+        if not services_dir.is_dir():
             continue
-        if data.get("schema_version", 0) > SCHEMA_VERSION:
-            continue
-        name = data.get("service") or path.stem
-        services[name] = data
+        for path in sorted(services_dir.glob("*.json")):
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+            if data.get("schema_version", 0) > SCHEMA_VERSION:
+                continue
+            name = data.get("service") or path.stem
+            if name in services:
+                continue
+            # Read-only marker: nothing writes a manifest back to disk, and
+            # Lodestar's DTOs drop keys they don't know.
+            data["_roster"] = label
+            services[name] = data
 
     return services
 

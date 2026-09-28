@@ -130,6 +130,12 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
         app.state.updates = None
         log.info("update checking unavailable (%s)", exc)
 
+    # The receiving end of a ripple (seren_observatory.ripple): a hippocampus
+    # on another node asks the model on THIS box, and the command runs as the
+    # person. Off until ripple.enabled.
+    from .ripple import RippleRunner
+    app.state.ripple = RippleRunner(cfg.ripple)
+
     # Root info page - no service data, just links + auth status indicator
     @app.get("/", response_class=HTMLResponse)
     async def root() -> str:

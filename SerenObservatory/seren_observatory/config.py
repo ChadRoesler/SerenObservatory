@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -75,6 +75,24 @@ class UpdatesConfig(BaseModel):
     allow_prerelease: bool = False
 
 
+class RippleConfig(BaseModel):
+    """This box receives a ripple: POST /api/v1/system/ripple runs `command`
+    AS `run_as` - the model that lives here, woken by a hippocampus on another
+    node (seren_observatory.ripple has the why). Off until enabled; the caller
+    sends only the message, never the command."""
+    enabled: bool = False
+    command: Union[list[str], str] = Field(default_factory=lambda: ["claude", "-p", "{message}"])
+    # Whose account the command runs as (seren_sinew.runas). Blank = the
+    # Observatory's own, refused when that is root or LocalSystem. The
+    # Starwright card fills it with whoever installed it.
+    run_as: str = ""
+    cwd: str = ""
+    timeout_seconds: int = 900
+    # true: the message goes on the command's stdin instead of {message} - for
+    # `ssh host claude -p`, where a remote shell would re-parse an argument.
+    stdin: bool = False
+
+
 class ObservatoryConfig(BaseModel):
     """seren-observatory network config. Defaults match the cluster convention:
     bind all interfaces (trusted LAN) on 7777.
@@ -96,6 +114,7 @@ class ObservatoryConfig(BaseModel):
     # the env override and expansion happen in manifests.resolve_manifests_dir.
     manifests_dir: str = "~/.seren/services"
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
+    ripple: RippleConfig = Field(default_factory=RippleConfig)
 
 
 _DEFAULT_CONFIG_PATH = Path.home() / "seren-observatory" / "seren-observatory.yaml"
@@ -165,25 +184,27 @@ def _apply_server_overrides(cfg: ObservatoryConfig, server: dict[str, Any], *, s
               "(the installer's --gen-token writes it). See config.py for why.")
 
 
-def _apply_updates_overrides(cfg: ObservatoryConfig, updates: dict[str, Any], *, source: str) -> None:
-    """The updates: block, per key like the server: block. It went unread for a
-    while: Starwright's --no-updates wrote ``updates: enabled: false`` and only
-    the env var actually switched the check off."""
-    known = set(UpdatesConfig.model_fields)
-    for key, raw in updates.items():
+def _apply_block(cfg: ObservatoryConfig, block: str, values: dict[str, Any], *, source: str) -> None:
+    """A nested block (updates:, ripple:), per key like the server: block: a bad
+    value falls back with a note, an unknown key is named. The updates: block
+    went unread for a while - Starwright's --no-updates wrote
+    ``updates: enabled: false`` and only the env var switched the check off."""
+    model = type(getattr(cfg, block))
+    known = set(model.model_fields)
+    for key, raw in values.items():
         if key not in known:
-            print(f"[seren-observatory] config: ignoring unknown updates key '{key}' from {source}")
+            print(f"[seren-observatory] config: ignoring unknown {block} key '{key}' from {source}")
             continue
         try:
-            current = cfg.updates.model_dump()
+            current = getattr(cfg, block).model_dump()
             current[key] = raw
-            cfg.updates = UpdatesConfig.model_validate(current)
+            setattr(cfg, block, model.model_validate(current))
         except Exception as e:
-            print(f"[seren-observatory] config: ignored bad value for 'updates.{key}' from {source}: {e}")
+            print(f"[seren-observatory] config: ignored bad value for '{block}.{key}' from {source}: {e}")
 
 
 def load_config(path: Optional[str] = None) -> ObservatoryConfig:
-    """Defaults -> YAML (server: and updates: blocks) -> env vars. Never raises on bad input.
+    """Defaults -> YAML (server:, updates: and ripple: blocks) -> env vars. Never raises on bad input.
 
     ``path`` is the --config flag value (highest-priority config location).
     """
@@ -198,11 +219,12 @@ def load_config(path: Optional[str] = None) -> ObservatoryConfig:
             _apply_server_overrides(cfg, server, source=str(yaml_path))
         elif server is not None:
             print(f"[seren-observatory] config: 'server' in {yaml_path} must be a mapping; ignoring")
-        updates = data.get("updates")
-        if isinstance(updates, dict):
-            _apply_updates_overrides(cfg, updates, source=str(yaml_path))
-        elif updates is not None:
-            print(f"[seren-observatory] config: 'updates' in {yaml_path} must be a mapping; ignoring")
+        for block in ("updates", "ripple"):
+            values = data.get(block)
+            if isinstance(values, dict):
+                _apply_block(cfg, block, values, source=str(yaml_path))
+            elif values is not None:
+                print(f"[seren-observatory] config: '{block}' in {yaml_path} must be a mapping; ignoring")
 
     # Layer 3: env vars (highest precedence). Honor BOTH the original
     # AGENT_HOST/AGENT_PORT (what app.py historically read, and what the old

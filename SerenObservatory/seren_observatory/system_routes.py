@@ -12,6 +12,7 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi.responses import JSONResponse
 
 from seren_meninges.updates import updates_payload
 
@@ -356,6 +357,19 @@ async def reclaim(body: dict | None = None) -> dict[str, Any]:
                            "error": result.get("error") or result.get("stderr") or "stop failed"})
 
     return {"stopped": stopped, "kept": kept, "failed": failed}
+
+@router.post("/ripple")
+async def ripple(request: Request, body: dict | None = None):
+    """Wake the model on this box: run the configured ripple command AS the
+    configured person with the caller's message (seren_observatory.ripple).
+    Body: {event, message, draft_id?}. The command is this node's config,
+    never the caller's."""
+    runner = getattr(request.app.state, "ripple", None)
+    if runner is None:
+        return JSONResponse({"ok": False, "error": "ripple is not available on this Observatory"}, status_code=409)
+    status, answer = await asyncio.to_thread(runner.run, body or {})
+    return JSONResponse(answer, status_code=status)
+
 
 @router.post("/reboot")
 async def reboot(body: dict | None = None) -> dict[str, Any]:

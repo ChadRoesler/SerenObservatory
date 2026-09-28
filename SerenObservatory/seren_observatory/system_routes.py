@@ -268,6 +268,15 @@ RECLAIMABLE_TYPES = frozenset({"pid_file"})
 SELF_NAMES = frozenset({"observatory", "seren-observatory", "agent", "seren-agent"})
 
 
+def _is_an_observatory(m: dict) -> bool:
+    """An observatory by its unit or its Windows service, instance suffix and
+    all (seren-observatory-wren.service): an install under a named root runs
+    its own, and reclaim from one must not stop another mid-loop either."""
+    unit = (m.get("systemd_unit") or "").removesuffix(".service")
+    win = m.get("windows_service") or ""
+    return any(x == "seren-observatory" or x.startswith("seren-observatory-") for x in (unit, win))
+
+
 def reclaim_plan(all_manifests: dict[str, dict], *, exclude: set[str],
                  include: set[str], everything: bool) -> tuple[list[tuple[str, dict]], list[dict]]:
     """Decide what reclaim would stop, without stopping anything.
@@ -292,7 +301,7 @@ def reclaim_plan(all_manifests: dict[str, dict], *, exclude: set[str],
     kept: list[dict] = []
     for name, m in all_manifests.items():
         stype = manifests.service_type(m)
-        if name in SELF_NAMES or (m.get("systemd_unit") or "") == "seren-observatory":
+        if name in SELF_NAMES or _is_an_observatory(m):
             kept.append({"service": name, "why": "the observatory never stops itself"})
             continue
         if name in exclude:

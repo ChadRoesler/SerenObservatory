@@ -165,3 +165,30 @@ def test_default_host_is_cluster_bind():
     """Observatory follows the leader on structure but keeps its 0.0.0.0 cluster
     bind (it's a LAN plane; the auth interlock is the guard, not the bind)."""
     assert ObservatoryConfig().host == "0.0.0.0"
+
+
+def test_yaml_updates_block_is_read(cfg_path, monkeypatch):
+    """Starwright's --no-updates writes this block; it went unread and only the
+    env var switched the check off."""
+    monkeypatch.delenv("SEREN_AGENT_UPDATES_ENABLED", raising=False)
+    cfg_path.write_text("updates:\n  enabled: false\n  check_interval_hours: 12\n")
+    cfg = load_config()
+    assert cfg.updates.enabled is False
+    assert cfg.updates.check_interval_hours == 12
+
+
+def test_updates_env_beats_yaml(cfg_path, monkeypatch):
+    monkeypatch.setenv("SEREN_AGENT_UPDATES_ENABLED", "true")
+    cfg_path.write_text("updates:\n  enabled: false\n")
+    assert load_config().updates.enabled is True
+
+
+def test_bad_updates_value_falls_back(cfg_path, monkeypatch, capsys):
+    monkeypatch.delenv("SEREN_AGENT_UPDATES_ENABLED", raising=False)
+    cfg_path.write_text("updates:\n  check_interval_hours: soon\n  enabled: false\n  phone_home: true\n")
+    cfg = load_config()
+    assert cfg.updates.check_interval_hours == 6.0   # bad value falls back
+    assert cfg.updates.enabled is False              # good value applies
+    out = capsys.readouterr().out
+    assert "ignored bad value for 'updates.check_interval_hours'" in out
+    assert "unknown updates key 'phone_home'" in out

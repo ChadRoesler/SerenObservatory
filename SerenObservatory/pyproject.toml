@@ -40,7 +40,7 @@ dependencies = [
 	# replacing the per-service request_log.py. env_prefix preserves
 	# Observatory's SEREN_AGENT_LOG_* contract; service_name resolves the
 	# log filename (-> observatory-requests.log).
-	"seren-sinew>=1.7.0,<2",
+	"seren-sinew>=1.6.5,<2",
 ]
 
 [project.optional-dependencies]

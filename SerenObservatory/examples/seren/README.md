@@ -36,6 +36,7 @@ rather than inline.
 | writer | what it covers |
 |---|---|
 | `setup-seren-service.sh` | every `seren-*` constellation service (`systemd` type) |
+| `setup-seren-service.ps1` | the same services on a Windows box (`windows_service` type) |
 | `write_service_manifest` in node prep's `common.sh` | the inference-side services — llama, kokoro, comfy, whisper, coral |
 | you, by hand | anything else, including `docker_compose` services |
 
@@ -44,7 +45,7 @@ directory exists.
 
 ---
 
-## The four service types
+## The five service types
 
 `service_type` decides how Observatory starts, stops and inspects a service.
 **Omit it and you get `pid_file`** — which keeps every manifest written
@@ -87,6 +88,19 @@ See **`services/searxng.json`**. Required: `compose_file` and
 say it explicitly; the stack name and the service name inside it are not
 always the same, and when they diverge the failure is a confusing no-op.
 
+### `windows_service` — a Windows service
+
+The constellation services on a Windows box, installed with NSSM by the
+Starwright PowerShell cards. Lifecycle is `sc.exe start|stop` against
+`windows_service`, waiting for RUNNING or STOPPED; restart is a stop that
+finished, then a start. The Observatory runs unprivileged: the card's service
+core grants its account start, stop and query on that one service (`sc
+sdset`), the Windows version of the node's `seren-systemctl` rule. An access
+denied means the grant is missing; reinstalling the service with its card
+writes it again. Memory, CPU and uptime come back `null` (there is no `/proc`).
+
+Required: `windows_service`, and `port` (use `0` if it doesn't listen).
+
 ---
 
 ## Fields Observatory actually reads
@@ -97,12 +111,14 @@ notes in there if you like.
 | field | meaning |
 |---|---|
 | `service` | the name. Falls back to the filename stem if absent. |
-| `service_type` | one of the four above. Defaults to `pid_file`. |
+| `service_type` | one of the five above. Defaults to `pid_file`. |
 | `port` | what it listens on. `0` means "doesn't listen". |
 | `health_url` | probed for the health endpoint. |
 | `schema_version` | a manifest **newer** than Observatory understands is skipped, not guessed at. Current: 2. |
 | `systemd_unit` | `systemd` only. |
-| `start_script`, `stop_script`, `pid_path`, `log_path` | `pid_file` only. |
+| `windows_service` | `windows_service` only. |
+| `start_script`, `stop_script`, `pid_path` | `pid_file` only. |
+| `log_path` | the file `/logs` tails (`pid_file`, `windows_service`). |
 | `compose_file`, `compose_service` | `docker_compose` only. |
 | `implementation` | free text, shown in the dashboard. |
 | `serviceSpecific` | opaque to Observatory; for service-aware tooling. |

@@ -64,6 +64,14 @@ operations to the right handler:
                       Required manifest fields: compose_file, compose_service.
                       Used on the NUC for: searxng, searxng-redis.
 
+    windows_service - Service is a Windows SCM service (NSSM, installed by
+                      the Starwright PowerShell cards). Lifecycle = sc.exe
+                      start/stop, waiting for the state; status from sc
+                      queryex. Required manifest fields: windows_service,
+                      port (or 0). Written by setup-seren-service.ps1, which
+                      also grants the Observatory's account start/stop/query
+                      on that one service.
+
 Manifests without `service_type` are treated as `pid_file` - keeps every
 existing manifest on every Jetson working without rewrites.
 ────────────────────────────────────────────────────────────────────────
@@ -122,7 +130,7 @@ SCHEMA_VERSION = 2
 
 # Valid service_type values. Anything else is treated as an error at lifecycle
 # dispatch time (handler returns {"ok": False, "error": "unknown service_type"}).
-SERVICE_TYPES = {"pid_file", "library", "systemd", "docker_compose"}
+SERVICE_TYPES = {"pid_file", "library", "systemd", "docker_compose", "windows_service"}
 
 
 def node_path() -> Path:

@@ -63,9 +63,11 @@ except ImportError:  # pragma: no cover - pyyaml is a hard dep, but be lenient
 class UpdatesConfig(BaseModel):
     """\"Is there a newer seren-observatory\" checking. Cosmetic, opt-outable.
 
-    Needs seren-meninges[updates]. Without it the check reports
-    status="unavailable" rather than silently reading as "you're current" -
-    see seren_meninges/updates.py for why that distinction is load-bearing.
+    Core in seren-meninges (2.x) and on by default; ``updates.enabled: false``
+    in the yaml or SEREN_AGENT_UPDATES_ENABLED=false turns it off. A checker
+    that could not look reports status="unavailable" rather than silently
+    reading as "you're current" - see seren_meninges/updates.py for why that
+    distinction is load-bearing.
     """
     enabled: bool = True
     check_interval_hours: float = 6.0
@@ -163,8 +165,25 @@ def _apply_server_overrides(cfg: ObservatoryConfig, server: dict[str, Any], *, s
               "(the installer's --gen-token writes it). See config.py for why.")
 
 
+def _apply_updates_overrides(cfg: ObservatoryConfig, updates: dict[str, Any], *, source: str) -> None:
+    """The updates: block, per key like the server: block. It went unread for a
+    while: Starwright's --no-updates wrote ``updates: enabled: false`` and only
+    the env var actually switched the check off."""
+    known = set(UpdatesConfig.model_fields)
+    for key, raw in updates.items():
+        if key not in known:
+            print(f"[seren-observatory] config: ignoring unknown updates key '{key}' from {source}")
+            continue
+        try:
+            current = cfg.updates.model_dump()
+            current[key] = raw
+            cfg.updates = UpdatesConfig.model_validate(current)
+        except Exception as e:
+            print(f"[seren-observatory] config: ignored bad value for 'updates.{key}' from {source}: {e}")
+
+
 def load_config(path: Optional[str] = None) -> ObservatoryConfig:
-    """Defaults -> YAML (server: block) -> env vars. Never raises on bad input.
+    """Defaults -> YAML (server: and updates: blocks) -> env vars. Never raises on bad input.
 
     ``path`` is the --config flag value (highest-priority config location).
     """
@@ -179,6 +198,11 @@ def load_config(path: Optional[str] = None) -> ObservatoryConfig:
             _apply_server_overrides(cfg, server, source=str(yaml_path))
         elif server is not None:
             print(f"[seren-observatory] config: 'server' in {yaml_path} must be a mapping; ignoring")
+        updates = data.get("updates")
+        if isinstance(updates, dict):
+            _apply_updates_overrides(cfg, updates, source=str(yaml_path))
+        elif updates is not None:
+            print(f"[seren-observatory] config: 'updates' in {yaml_path} must be a mapping; ignoring")
 
     # Layer 3: env vars (highest precedence). Honor BOTH the original
     # AGENT_HOST/AGENT_PORT (what app.py historically read, and what the old

@@ -8,6 +8,7 @@ Path C dispatcher: service_type drives which handler does the work.
     library         → _library_* family. No daemon, no lifecycle ops.
     systemd         → _systemd_* family. systemctl-managed unit.
     docker_compose  → _docker_* family. compose stack containers.
+    windows_service → _windows_* family. an SCM service (NSSM) via sc.exe.
 
 The public functions (start, stop, restart, status, tail_log) read the
 service_type from the manifest and dispatch. Adding a new type means
@@ -580,6 +581,166 @@ async def _systemd_status(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 # ═════════════════════════════════════════════════════════════════════
+# WINDOWS_SERVICE handler family - an SCM service on a Windows box
+# ═════════════════════════════════════════════════════════════════════
+#
+# The Starwright PowerShell cards install services with NSSM. They are driven
+# here with sc.exe, UNPRIVILEGED: at install time (elevated) the card's service
+# core grants the Observatory's account start, stop and query on that one
+# service (sc sdset). That is the Windows spelling of the seren-systemctl
+# grant on a node - this account can manage the family's services and nothing
+# else on the box. An access-denied here means the grant is missing, and the
+# hint says how to put it back.
+#
+# sc.exe start/stop return while the service is still START_PENDING or
+# STOP_PENDING, so each verb waits for the state it asked for, the way
+# systemctl does. There is no sc restart: it is a stop that finished, then a
+# start.
+
+_SC_STATES = {
+    "1": "STOPPED", "2": "START_PENDING", "3": "STOP_PENDING", "4": "RUNNING",
+    "5": "CONTINUE_PENDING", "6": "PAUSE_PENDING", "7": "PAUSED",
+}
+_SC_ACCESS_DENIED = 5
+_SC_ALREADY_RUNNING = 1056
+_SC_NOT_ACTIVE = 1062
+_SC_NO_SUCH_SERVICE = 1060
+_WINDOWS_WAIT_S = 30.0
+
+
+def _windows_service_name(manifest: dict[str, Any]) -> str | None:
+    return (manifest.get("windows_service")
+            or manifest.get("serviceSpecific", {}).get("windows_service"))
+
+
+def _sc(args: list[str], timeout: float = 10.0) -> dict[str, Any]:
+    try:
+        result = subprocess.run(["sc.exe", *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"sc.exe timed out after {timeout}s"}
+    except FileNotFoundError:
+        return {"ok": False, "error": "sc.exe not found - windows_service manifests only work on Windows"}
+    out: dict[str, Any] = {
+        "ok": result.returncode == 0,
+        "exit_code": result.returncode,
+        "stdout": result.stdout.strip(),
+        "stderr": result.stderr.strip(),
+    }
+    if result.returncode == _SC_ACCESS_DENIED:
+        out["error"] = "access denied"
+        out["hint"] = ("this account has no start/stop grant on the service - reinstall it with its "
+                       "Starwright card (-Service), which grants it, or run the Observatory as an admin")
+    elif result.returncode == _SC_NO_SUCH_SERVICE:
+        out["error"] = "no such service"
+    return out
+
+
+def _sc_query(name: str) -> tuple[str | None, int]:
+    """(state, pid) from `sc queryex`. state is None when the query failed."""
+    res = _sc(["queryex", name], timeout=5.0)
+    if not res.get("ok"):
+        return None, 0
+    state, pid = None, 0
+    for line in res.get("stdout", "").splitlines():
+        key, _, value = line.partition(":")
+        key, parts = key.strip(), value.split()
+        if key == "STATE" and parts:
+            state = _SC_STATES.get(parts[0], parts[-1])
+        elif key == "PID" and parts and parts[0].isdigit():
+            pid = int(parts[0])
+    return state, pid
+
+
+def _sc_wait(name: str, want: str) -> str | None:
+    """Poll until the service reaches `want` or _WINDOWS_WAIT_S passes (read
+    per call); return the last state seen."""
+    deadline = time.monotonic() + _WINDOWS_WAIT_S
+    state, _ = _sc_query(name)
+    while state != want and time.monotonic() < deadline:
+        time.sleep(0.5)
+        state, _ = _sc_query(name)
+    return state
+
+
+def _windows_start(manifest: dict[str, Any]) -> dict[str, Any]:
+    name = _windows_service_name(manifest)
+    if not name:
+        return {"ok": False, "error": "manifest missing windows_service"}
+    state, _ = _sc_query(name)
+    if state == "RUNNING":
+        return {"ok": True, "already_running": True}
+    res = _sc(["start", name])
+    if not res["ok"] and res.get("exit_code") != _SC_ALREADY_RUNNING:
+        return res
+    final = _sc_wait(name, "RUNNING")
+    if final != "RUNNING":
+        res.update(ok=False, error=f"{name} did not reach RUNNING within {_WINDOWS_WAIT_S:.0f}s (state {final})")
+        return res
+    res["ok"] = True
+    return res
+
+
+def _windows_stop(manifest: dict[str, Any]) -> dict[str, Any]:
+    name = _windows_service_name(manifest)
+    if not name:
+        return {"ok": False, "error": "manifest missing windows_service"}
+    state, _ = _sc_query(name)
+    if state == "STOPPED":
+        return {"ok": True, "was_running": False}
+    res = _sc(["stop", name])
+    if not res["ok"] and res.get("exit_code") != _SC_NOT_ACTIVE:
+        res["was_running"] = True
+        return res
+    final = _sc_wait(name, "STOPPED")
+    if final != "STOPPED":
+        res.update(ok=False, error=f"{name} did not reach STOPPED within {_WINDOWS_WAIT_S:.0f}s (state {final})")
+    else:
+        res["ok"] = True
+    res["was_running"] = True
+    return res
+
+
+def _windows_restart(manifest: dict[str, Any]) -> dict[str, Any]:
+    stop_res = _windows_stop(manifest)
+    if not stop_res.get("ok"):
+        return {
+            "ok": False,
+            "error": "stop failed - not starting on top of it: "
+                     + str(stop_res.get("error") or stop_res.get("stderr") or "see stop"),
+            "stop": stop_res,
+            "start": None,
+        }
+    start_res = _windows_start(manifest)
+    return {"ok": start_res.get("ok", False), "error": start_res.get("error"),
+            "stop": stop_res, "start": start_res}
+
+
+async def _windows_status(manifest: dict[str, Any]) -> dict[str, Any]:
+    name = _windows_service_name(manifest)
+    base = {"service": manifest.get("service"), "service_type": "windows_service",
+            "windows_service": name}
+    if not name:
+        return {**base, "running": False, "error": "manifest missing windows_service"}
+    state, pid = await asyncio.to_thread(_sc_query, name)
+    if state != "RUNNING":
+        out = {**base, "running": False, "state": state}
+        if state is None:
+            out["error"] = "sc queryex failed - the service is missing or this account cannot query it"
+        return out
+
+    port_health = None
+    if manifests.service_has_port(manifest):
+        health_url = manifest.get("health_url")
+        port_health = await (_http_probe(health_url) if health_url else _pid_port_health(manifest))
+
+    # Memory, CPU and uptime come from /proc on a node; Windows has no /proc,
+    # so they are None here rather than a guess.
+    return {**base, "running": True, "state": state, "pid": pid or None,
+            "memory_mb": None, "cpu_percent": None, "uptime_seconds": None,
+            "port_health": port_health}
+
+
+# ═════════════════════════════════════════════════════════════════════
 # DOCKER_COMPOSE handler family - containers in a compose stack
 # ═════════════════════════════════════════════════════════════════════
 #
@@ -1006,6 +1167,7 @@ def _start_sync(manifest: dict[str, Any]) -> dict[str, Any]:
     if stype == "pid_file":      return _pid_start(manifest)
     if stype == "library":       return _library_unsupported_op("start")
     if stype == "systemd":       return _systemd_start(manifest)
+    if stype == "windows_service": return _windows_start(manifest)
     if stype == "docker_compose": return _docker_start(manifest)
     return {"ok": False, "error": f"unknown service_type: {stype}"}
 
@@ -1015,6 +1177,7 @@ def _stop_sync(manifest: dict[str, Any]) -> dict[str, Any]:
     if stype == "pid_file":      return _pid_stop(manifest)
     if stype == "library":       return _library_unsupported_op("stop")
     if stype == "systemd":       return _systemd_stop(manifest)
+    if stype == "windows_service": return _windows_stop(manifest)
     if stype == "docker_compose": return _docker_stop(manifest)
     return {"ok": False, "error": f"unknown service_type: {stype}"}
 
@@ -1074,6 +1237,7 @@ def _restart_sync(manifest: dict[str, Any]) -> dict[str, Any]:
 
     if stype == "library":        return _library_unsupported_op("restart")
     if stype == "systemd":        return _systemd_restart(manifest)
+    if stype == "windows_service": return _windows_restart(manifest)
     if stype == "docker_compose": return _docker_restart(manifest)
     return {"ok": False, "error": f"unknown service_type: {stype}"}
 
@@ -1100,6 +1264,7 @@ async def status(manifest: dict[str, Any]) -> dict[str, Any]:
     if stype == "pid_file":       return await _pid_status(manifest)
     if stype == "library":        return await _library_status(manifest)
     if stype == "systemd":        return await _systemd_status(manifest)
+    if stype == "windows_service": return await _windows_status(manifest)
     if stype == "docker_compose": return await _docker_status(manifest)
     return {
         "service": manifest.get("service"),

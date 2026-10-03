@@ -101,6 +101,10 @@ def register_all_services(app: FastAPI) -> list[str]:
     needs no restart for its specific verbs either.
     """
     app.include_router(router)
+    # What each service keeps, and snapshots of it, through this node
+    # (stores_routes): the same four verbs for every service that has them.
+    from .stores_routes import router as stores_router
+    app.include_router(stores_router)
     mounted: list[str] = []
     for name in sorted(services_pkg.HANDLERS):
         specific = APIRouter(prefix=f"/api/v1/service/{name}", tags=[f"service:{name}"])

@@ -151,3 +151,27 @@ def test_where_a_service_listens_and_its_bearer(tmp_path):
     cfg.write_text("server:\n  bearer_token: abc\n")
     assert stores_routes.service_bearer({"config_path": str(cfg)}) == "abc"
     assert stores_routes.service_bearer({}) == "" and stores_routes.service_bearer({"config_path": str(tmp_path / "no.yaml")}) == ""
+
+
+async def test_a_rehearsal_is_relayed_both_ways(wired):
+    """A restore's dry run: of the service's own snapshot, and of one sent
+    down as an archive (Lodestar's stash). Both need the interlock."""
+    from seren_sinew.stores import pack_snapshot
+    app, keeper, calls = wired
+    sid = keeper.snapshot("nightly")["id"]
+    data = pack_snapshot(keeper.snapshot_dir(sid))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=OBS) as c:
+        bare = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+        assert (await bare.post("/api/v1/service/SerenMemory-wren/stores/rehearse", content=data)).status_code in (401, 403)
+        await bare.aclose()
+        r = await c.post(f"/api/v1/service/SerenMemory-wren/stores/snapshots/{sid}/rehearse")
+        assert r.status_code == 200 and r.json()["ok"] and r.json()["source"] == "own", r.text
+        r = await c.post("/api/v1/service/SerenMemory-wren/stores/snapshots/nope/rehearse")
+        assert r.status_code == 404 and "no snapshot 'nope'" in r.json()["detail"]
+        r = await c.post("/api/v1/service/SerenMemory-wren/stores/rehearse", content=data)
+        assert r.status_code == 200 and r.json()["ok"] and r.json()["source"] == "sent", r.text
+        assert calls[-1][1] == "http://127.0.0.1:7267/stores/rehearse" and calls[-1][2]["Authorization"] == "Bearer svc-secret"
+        r = await c.post("/api/v1/service/SerenMemory-wren/stores/rehearse", content=b"junk")
+        assert r.status_code == 200 and r.json()["ok"] is False, "a bad archive is a failed rehearsal, said plainly"
+        assert (await c.post("/api/v1/service/SerenMemory-wren/stores/rehearse")).status_code == 400
+        assert keeper.list()[0]["id"] == sid and len(keeper.list()) == 1, "nothing was kept"

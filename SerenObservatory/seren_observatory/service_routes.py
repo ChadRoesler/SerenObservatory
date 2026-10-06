@@ -5,6 +5,9 @@ Universal verbs (live on every service that's installed):
     POST   /start              - invoke ~/start_<name>.sh
     POST   /stop               - invoke ~/stop_<name>.sh
     POST   /restart            - stop, wait for the port, start
+    POST   /ensure             - start it if it is down and answer only when
+                                  it is READY (seren_sinew.orchestration):
+                                  body {"holder","reason","wait_seconds"}
     GET    /health             - quick port probe (or library-mode short-circuit)
     GET    /status             - pid + memory + uptime + port health
     GET    /logs?lines=N       - tail of ~/seren-logs/<name>.log
@@ -35,7 +38,7 @@ answer", and then the operator loses the one line that says why.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 
 from . import lifecycle, manifests, services as services_pkg
 
@@ -57,6 +60,21 @@ async def get_manifest(name: str):
 @router.post("/{name}/start")
 async def post_start(name: str):
     return await lifecycle.start(_installed(name))
+
+
+@router.post("/{name}/ensure")
+async def post_ensure(name: str, request: Request):
+    """The Observatory's link in the chain (Design note:): hippocampus =>
+    Lodestar => Observatory => start llama => wait until llama is up => say
+    so. One call, one answer, and the answer is 'ready' or why not."""
+    from seren_sinew.orchestration import EnsureRequest
+    m = _installed(name)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - no body is a plain ensure with the defaults
+        body = None
+    req = EnsureRequest.from_dict(body if isinstance(body, dict) else None)
+    return await lifecycle.ensure_ready(m, req.wait_seconds)
 
 
 @router.post("/{name}/stop")

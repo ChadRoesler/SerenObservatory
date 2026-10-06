@@ -140,7 +140,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def root() -> str:
         node = manifests.load_node()
-        host = (node or {}).get("hostname", "unknown")
+        host = html.escape(str((node or {}).get("hostname", "unknown")))
         auth_state = "configured" if token else f"DISABLED (no token in {html.escape(str(secrets_path))})"
         # Resolved here, not captured at startup, so the page names the
         # directories the roster is actually read from on this request.
@@ -148,8 +148,32 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
                             for label, p in manifests.rosters())
         node_file = html.escape(str(manifests.node_path()))
         return f"""<!doctype html>
-<html><head><title>seren-observatory - {host}</title></head>
-<body style="font-family: system-ui; max-width: 720px; margin: 2rem auto; padding: 0 1rem;">
+<html><head><title>seren-observatory - {host}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<style>
+  /* Dark, in the glance's own palette (viewer/ui/styles.css): this page is
+     what a browser lands on at the node's address, usually at night. */
+  :root {{ color-scheme: dark; --bg: #14141f; --panel: #1f2036; --line: #33365a;
+           --text: #e6e8f5; --muted: #9aa0c8; --accent: #6eff70; }}
+  html {{ background: var(--bg); }}
+  body {{ font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem;
+          background: var(--bg); color: var(--text); line-height: 1.5; }}
+  h1 {{ color: var(--accent); font-weight: 600; margin-bottom: .2rem; }}
+  h2 {{ color: var(--muted); font-size: 1rem; font-weight: 600; text-transform: uppercase;
+        letter-spacing: .06em; border-bottom: 1px solid var(--line); padding-bottom: .3rem; margin-top: 2rem; }}
+  p, li {{ color: var(--text); }}
+  a {{ color: var(--accent); text-decoration: none; }}
+  a:hover, a:focus {{ text-decoration: underline; }}
+  dl {{ display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; background: var(--panel);
+        border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.2rem; }}
+  dt {{ color: var(--muted); }}
+  dd {{ margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }}
+  ul {{ padding-left: 1.2rem; }}
+  li {{ margin: .3rem 0; overflow-wrap: anywhere; }}
+  .foot {{ color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }}
+</style></head>
+<body>
 <h1>seren-observatory</h1>
 <p>Per-node management plane for the Seren cluster.</p>
 <dl>
@@ -159,13 +183,14 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
 </dl>
 <h2>Endpoints</h2>
 <ul>
+  <li><a href="/viewer">/viewer</a> - the glance: this node's vitals and services</li>
   <li><a href="/docs">/docs</a> - interactive API docs (Swagger)</li>
   <li><a href="/api/v1/system/ping">/api/v1/system/ping</a> - public liveness</li>
   <li><a href="/api/v1/system/version">/api/v1/system/version</a> - public version</li>
   <li>/api/v1/system/{{node, services, health, reclaim}} - auth required</li>
   <li>/api/v1/service/{{name}}/{{start, stop, restart, health, status, logs, manifest}} - auth required</li>
 </ul>
-<p>Source of truth: {roster} + {node_file}</p>
+<p class="foot">Source of truth: {roster} + {node_file}</p>
 </body></html>"""
 
     # The Observatory glance - on the shared SerenMeninges baseplate.

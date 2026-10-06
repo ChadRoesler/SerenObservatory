@@ -1257,6 +1257,59 @@ async def restart(manifest: dict[str, Any]) -> dict[str, Any]:
         return await asyncio.to_thread(_restart_sync, manifest)
 
 
+# How often ensure_ready looks at the health check while a service comes up.
+ENSURE_POLL_SECONDS = 2.0
+
+
+async def ensure_ready(manifest: dict[str, Any], wait_seconds: float) -> dict[str, Any]:
+    """Make the service ready to take a call, and answer only when it is
+    (seren_sinew.orchestration - the Observatory's link in the chain: start
+    it, WAIT until it answers its health check, then say so).
+
+    Already answering: ready at once, started false - whoever started it
+    still owns it. Not answering: start it, then probe every
+    ENSURE_POLL_SECONDS for up to wait_seconds. A service this call started
+    that never answers is stopped again, so a model that cannot load does not
+    sit holding the GPU with nobody waiting for it.
+
+    Always returns an EnsureResult dict; a start that ran and failed is
+    ok false with the script's own words, never an exception."""
+    from seren_sinew.orchestration import EnsureResult
+    name = str(manifest.get("service") or "")
+    node = str((manifests.load_node() or {}).get("hostname") or "")
+    port = int(manifest.get("port") or 0)
+    health_path = str(manifest.get("health_path") or "/health")
+    t0 = time.monotonic()
+
+    def result(**kw: Any) -> dict[str, Any]:
+        return EnsureResult(service=name, node=node, port=port, health_path=health_path,
+                            waited_seconds=round(time.monotonic() - t0, 2), **kw).to_dict()
+
+    if not manifests.service_has_port(manifest):
+        return result(ok=False, error=f"{name} has no port to wait on (a library, not a server)")
+    if (await probe_port(manifest)).get("ok"):
+        return result(ok=True, ready=True, already_running=True)
+
+    started = await start(manifest)
+    if not started.get("ok"):
+        why = started.get("error") or started.get("stderr") or started.get("stdout") or "the start failed"
+        return result(ok=False, error=f"{name} did not start: {str(why)[:300]}")
+    we_started = not started.get("already_running")
+
+    deadline = t0 + max(0.0, float(wait_seconds))
+    while True:
+        if (await probe_port(manifest)).get("ok"):
+            return result(ok=True, ready=True, started=we_started, already_running=not we_started)
+        if time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(min(ENSURE_POLL_SECONDS, max(0.05, deadline - time.monotonic())))
+    if we_started:
+        await stop(manifest)
+    return result(ok=False, started=False,
+                  error=f"{name} did not answer its health check within {int(wait_seconds)}s"
+                        + (" and was stopped again" if we_started else ""))
+
+
 async def status(manifest: dict[str, Any]) -> dict[str, Any]:
     """Comprehensive status. Every handler returns the same shape so the
     API caller doesn't care about service_type."""

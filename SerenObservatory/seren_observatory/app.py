@@ -59,7 +59,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     manifests.configure(cfg.manifests_dir)
 
     app = FastAPI(
-        title="seren-observatory",
+        title="SerenObservatory",
         version=APP_VERSION,
         description="Per-node management plane. Manifest-driven service "
                     "lifecycle, status, and orchestration. Bearer token auth "
@@ -148,7 +148,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
                             for label, p in manifests.rosters())
         node_file = html.escape(str(manifests.node_path()))
         return f"""<!doctype html>
-<html><head><title>seren-observatory - {host}</title>
+<html><head><title>SerenObservatory - {host}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <style>
@@ -174,7 +174,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
   .foot {{ color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }}
 </style></head>
 <body>
-<h1>seren-observatory</h1>
+<h1>SerenObservatory</h1>
 <p>Per-node management plane for the Seren cluster.</p>
 <dl>
   <dt>Hostname:</dt> <dd>{host}</dd>
@@ -205,7 +205,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
         # surfaced in the UI instead of hidden.
         return render_from_dir(
             Path(__file__).resolve().parent / "viewer" / "ui",
-            title="seren-observatory",
+            title="SerenObservatory",
             brand="Seren<b>Observatory</b>",
             subtitle=f"v{APP_VERSION} · per-node watch plane",
             accent="#f59056",

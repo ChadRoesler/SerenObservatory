@@ -102,6 +102,29 @@ async def get_status(name: str):
     return await lifecycle.status(_installed(name))
 
 
+@router.post("/{name}/orchestrated")
+async def post_orchestrated(name: str, request: Request):
+    """Mark a service as started on demand (or not): body
+    {"orchestrated": true|false}. Off then reads as idle, not unhealthy, in
+    /system/health and on the glance. A POST, so the interlock applies. An
+    ensure that starts a service sets this by itself."""
+    _installed(name)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    flag = (body or {}).get("orchestrated", True)
+    if isinstance(flag, str):
+        flag = flag.strip().lower() in ("1", "true", "yes", "on")
+    try:
+        m = manifests.set_orchestrated(name, bool(flag))
+    except FileNotFoundError:
+        raise HTTPException(404, f"no manifest file for {name}")
+    except OSError as e:
+        raise HTTPException(500, f"could not write {name}'s manifest: {e}")
+    return {"ok": True, "service": name, "orchestrated": bool(flag), "manifest": m}
+
+
 @router.get("/{name}/logs")
 async def get_logs(name: str, lines: int = 100):
     m = _installed(name)

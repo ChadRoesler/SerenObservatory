@@ -261,3 +261,49 @@ def service_has_lifecycle(manifest: dict[str, Any]) -> bool:
     docker_compose services all return True.
     """
     return service_type(manifest) != "library"
+
+# ── orchestrated: off on purpose ─────────────────────────────────────────────
+# Design note: "we need to have a way of flagging services as
+# 'orchestrated' so they don't report as unhealthy when they are healthy,
+# just not on cause orchestration." llama, kokoro, whisper and comfy are
+# started by Lodestar when someone needs them and stopped when nobody does
+# (seren_sinew.orchestration). Between uses they are OFF, and off was read as
+# not_running, which made the node degraded and its health pill red for doing
+# exactly what it was built to do.
+#
+# The flag lives in the manifest. It is set three ways: the node installer
+# writes it for the on-demand services; POST /service/{name}/orchestrated
+# flips it by hand; and an `ensure` that STARTED a service sets it, because
+# that is the proof. This is the one key anything writes back into a
+# manifest; everything else in a manifest is the installer's.
+
+def is_orchestrated(manifest: dict[str, Any]) -> bool:
+    v = manifest.get("orchestrated")
+    return v is True or (isinstance(v, str) and v.strip().lower() in ("1", "true", "yes", "on"))
+
+
+def manifest_path(name: str) -> Path | None:
+    """The file a service's manifest was loaded from (the roster that won)."""
+    for _label, services_dir in rosters():
+        p = services_dir / f"{name}.json"
+        if p.is_file():
+            return p
+    return None
+
+
+def set_orchestrated(name: str, flag: bool) -> dict[str, Any]:
+    """Write `orchestrated` into the service's manifest file and return the
+    manifest as it now reads. Atomic (tmp + replace); every other key kept.
+    Raises FileNotFoundError when there is no such service."""
+    path = manifest_path(name)
+    if path is None:
+        raise FileNotFoundError(name)
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    data["orchestrated"] = bool(flag)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    return data

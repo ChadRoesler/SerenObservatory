@@ -178,7 +178,10 @@ a { text-decoration: none; }
     padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line);
 }
     .health-chip.up { color: var(--ok); border-color: var(--ok); }
-    .health-chip.down { color: var(--danger); border-color: var(--danger); }
+    .health-chip.idle { color: #a6adc8; border-color: #45475a; }
+.dot.idle { background: #585b70; box-shadow: none; }
+.badge.orch { color: #89b4fa; border-color: #45475a; margin-left: 4px; }
+.health-chip.down { color: var(--danger); border-color: var(--danger); }
     .health-chip.na { color: var(--faint); }
 
 .acts { display: flex; gap: 5px; justify-content: flex-end; }

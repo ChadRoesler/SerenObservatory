@@ -54,7 +54,9 @@ function renderHealthPill(health) {
     const pill = $('health-pill');
     if (!health) { pill.textContent = '-'; pill.classList.remove('hot'); return; }
     const ok = !!health.ok;
-    pill.textContent = `${ok ? 'healthy' : 'degraded'} ${health.healthy}/${health.total}`;
+    const idle = (health.idle || []).length;
+    pill.textContent = `${ok ? 'healthy' : 'degraded'} ${health.healthy}/${health.total}${idle ? ` · ${idle} idle` : ''}`;
+    pill.title = idle ? `${idle} orchestrated service(s) off until asked for: ${(health.idle || []).join(', ')}` : 'local service health';
     pill.classList.toggle('hot', !ok);   // .head-pill.hot is the shell's alert variant
     pill.style.display = '';
 }
@@ -118,13 +120,19 @@ function svcRow(name, entry) {
     const lib = st.library_mode || stype === 'library';
     const running = !!st.running;
     const ph = st.port_health;
+    // Orchestrated: Lodestar starts it when someone needs it and stops it when
+    // nobody does. Off is its resting state - shown as idle, never as down.
+    const orch = !!(st.orchestrated || m.orchestrated);
+    const idle = orch && !running;
 
     let healthChip = `<span class="health-chip na">-</span>`;
     if (lib) healthChip = `<span class="health-chip na">n/a</span>`;
+    else if (idle) healthChip = `<span class="health-chip idle" title="orchestrated: started on demand, off until asked for">idle</span>`;
     else if (ph && ph.ok) healthChip = `<span class="health-chip up">up${ph.latency_ms != null ? ' ' + ph.latency_ms + 'ms' : ''}</span>`;
     else if (running && ph && !ph.ok) healthChip = `<span class="health-chip down">down</span>`;
+    const orchBadge = orch ? ` <span class="badge orch" title="orchestrated: Lodestar starts and stops it">on demand</span>` : '';
 
-    const dotCls = lib ? 'stop' : (running ? (ph && !ph.ok ? 'bad' : 'run') : 'stop');
+    const dotCls = lib ? 'stop' : (running ? (ph && !ph.ok ? 'bad' : 'run') : (idle ? 'idle' : 'stop'));
     const typeCls = stype === 'library' ? 'lib' : (stype === 'systemd' ? 'systemd' : (stype === 'docker_compose' ? 'docker' : 'pid'));
 
     const acts = lib ? '' : `
@@ -133,9 +141,9 @@ function svcRow(name, entry) {
         <button class="btn-mini" onclick="svcAction('${escapeHtml(name)}','restart')" title="restart">⟳</button>`;
 
     return `<div class="svc-row">
-        <span class="dot ${dotCls}" title="${running ? 'running' : 'stopped'}"></span>
+        <span class="dot ${dotCls}" title="${running ? 'running' : (idle ? 'idle (orchestrated)' : 'stopped')}"></span>
         <span class="nm">${escapeHtml(name)}</span>
-        <span class="col"><span class="badge ${typeCls}">${escapeHtml(stype)}</span></span>
+        <span class="col"><span class="badge ${typeCls}">${escapeHtml(stype)}</span>${orchBadge}</span>
         <span class="col">${healthChip}</span>
         <span class="col">${st.memory_mb != null ? st.memory_mb + ' MB' : '-'}</span>
         <span class="col">${st.cpu_percent != null ? st.cpu_percent + '%' : '-'}</span>
@@ -203,7 +211,13 @@ async function boot() {
         api(`${API}/system/services`),
     ]);
 
-    if (node.status === 'rejected' && statusOf(node.reason) === 401) showError(tokenHint(401));
+    if (node.status === 'rejected' && statusOf(node.reason) === 401) {
+        // Every read on a provisioned node needs the token, so a first visit
+        // is a blank page unless this is said loudly. Once per visit, open
+        // the token modal itself; the banner stays until a token is saved.
+        showError(tokenHint(401) + ` <button class="btn-mini" onclick="openToken()">enter token</button>`);
+        if (!getToken() && !window._askedToken && typeof openToken === 'function') { window._askedToken = true; openToken(); }
+    }
 
     // Infer provisioning: open GETs with no token entered => the node has no
     // secret => lifecycle mutations will fail closed (503). Surface proactively.

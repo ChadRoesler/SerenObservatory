@@ -112,6 +112,15 @@ restart, the manifest is read when the call arrives.
 The root page shows your auth state up front - "configured" or "DISABLED (no
 token)" - so you can see at a glance whether the interlock is armed.
 
+**Orchestrated services.** llama, kokoro, whisper and comfy are started by
+Lodestar when someone needs them and stopped when nobody does, so between uses
+they are off on purpose. A manifest with `"orchestrated": true` (the node
+installer writes it for those four; an `ensure` that starts a service sets it
+too) reports `idle` instead of `not_running`: `/system/health` lists it under
+`idle`, stays `ok`, and the glance shows a grey "idle" chip with an "on demand"
+badge rather than a red one. Flip it by hand with
+`POST /service/<name>/orchestrated {"orchestrated": true|false}`.
+
 ---
 
 ## What it logs (and where)

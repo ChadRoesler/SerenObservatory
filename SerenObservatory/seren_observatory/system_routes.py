@@ -229,6 +229,7 @@ async def system_health() -> dict[str, Any]:
     healthy_count = 0
     degraded: list[str] = []
     not_running: list[str] = []
+    idle: list[str] = []          # off on purpose: orchestrated, waiting to be asked for
 
     async def assess(name: str, m: dict) -> None:
         nonlocal healthy_count
@@ -237,6 +238,11 @@ async def system_health() -> dict[str, Any]:
             # Library-mode services don't "run" so they're not degraded
             if st.get("library_mode"):
                 healthy_count += 1
+                return
+            # An orchestrated service is started when someone needs it and
+            # stopped when nobody does. Off is its resting state, not a fault.
+            if st.get("orchestrated"):
+                idle.append(name)
                 return
             not_running.append(name)
             return
@@ -254,6 +260,7 @@ async def system_health() -> dict[str, Any]:
         "ok": overall,
         "total": len(all_manifests),
         "healthy": healthy_count,
+        "idle": idle,
         "degraded": degraded,
         "not_running": not_running,
     }

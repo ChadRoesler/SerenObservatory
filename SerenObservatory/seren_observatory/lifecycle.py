@@ -1295,6 +1295,14 @@ async def ensure_ready(manifest: dict[str, Any], wait_seconds: float) -> dict[st
         why = started.get("error") or started.get("stderr") or started.get("stdout") or "the start failed"
         return result(ok=False, error=f"{name} did not start: {str(why)[:300]}")
     we_started = not started.get("already_running")
+    if we_started and not manifests.is_orchestrated(manifest):
+        # Someone asked for it and we started it: that is what orchestrated
+        # means. From now on, off is idle, not a fault.
+        try:
+            manifests.set_orchestrated(name, True)
+        except OSError as e:
+            import logging
+            logging.getLogger("seren_observatory").info("could not mark %s orchestrated: %s", name, e)
 
     deadline = t0 + max(0.0, float(wait_seconds))
     while True:
@@ -1312,7 +1320,17 @@ async def ensure_ready(manifest: dict[str, Any], wait_seconds: float) -> dict[st
 
 async def status(manifest: dict[str, Any]) -> dict[str, Any]:
     """Comprehensive status. Every handler returns the same shape so the
-    API caller doesn't care about service_type."""
+    API caller doesn't care about service_type. `orchestrated` rides on every
+    answer: a service that is off because Lodestar starts it on demand is
+    idle, not down (manifests.is_orchestrated)."""
+    st = await _status_by_type(manifest)
+    st["orchestrated"] = manifests.is_orchestrated(manifest)
+    if st["orchestrated"] and not st.get("running"):
+        st["idle"] = True
+    return st
+
+
+async def _status_by_type(manifest: dict[str, Any]) -> dict[str, Any]:
     stype = manifests.service_type(manifest)
     if stype == "pid_file":       return await _pid_status(manifest)
     if stype == "library":        return await _library_status(manifest)

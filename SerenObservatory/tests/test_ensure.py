@@ -1,7 +1,7 @@
 """
 POST /api/v1/service/{name}/ensure - the Observatory's link in the chain.
 
-Design note: hippocampus => Lodestar => Observatory => start llama =>
+The chain: hippocampus => Lodestar => Observatory => start llama =>
 the Observatory WAITS until llama is up => tells Lodestar. Pinned here:
 
 - a service that already answers is ready at once and is not "started"

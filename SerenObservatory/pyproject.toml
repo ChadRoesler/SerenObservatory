@@ -7,6 +7,7 @@ build-backend = "setuptools.build_meta"
 name = "seren-observatory"
 dynamic = ["version"]
 description = "Per-node management plane for the Seren cluster - manifest-driven service lifecycle, status, and orchestration."
+readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
 requires-python = ">=3.10"
 keywords = ["seren", "jetson", "observatory", "fastapi", "llm"]

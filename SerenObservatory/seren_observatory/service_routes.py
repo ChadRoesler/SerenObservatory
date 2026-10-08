@@ -64,7 +64,7 @@ async def post_start(name: str):
 
 @router.post("/{name}/ensure")
 async def post_ensure(name: str, request: Request):
-    """The Observatory's link in the chain (Design note:): hippocampus =>
+    """The Observatory's link in the chain: hippocampus =>
     Lodestar => Observatory => start llama => wait until llama is up => say
     so. One call, one answer, and the answer is 'ready' or why not."""
     from seren_sinew.orchestration import EnsureRequest

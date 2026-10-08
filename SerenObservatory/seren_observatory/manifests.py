@@ -84,7 +84,7 @@ from pathlib import Path
 from typing import Any
 
 # The roster's location is resolved at CALL time, never frozen at import - the
-# same shape as auth.resolve_secrets_path. Design note: Starwright
+# same shape as auth.resolve_secrets_path. Starwright
 # installs under a root (~/seren/<install>/...), and two named installs on one
 # host each run an Observatory. A directory frozen at import could only ever
 # name the one shared ~/.seren/services, so each would list - and restart, and
@@ -167,7 +167,7 @@ def rosters() -> list[tuple[str, Path]]:
     is the default; [("install", <configured>), ("box", ~/.seren/services)]
     when it has been moved.
 
-    Design note: box-level GPU daemons are written by the node
+    Box-level GPU daemons are written by the node
     installers into ~/.seren/services whatever install is on the box. Moving
     an install's roster must not hide them from that install's Observatory.
     """
@@ -263,9 +263,8 @@ def service_has_lifecycle(manifest: dict[str, Any]) -> bool:
     return service_type(manifest) != "library"
 
 # ── orchestrated: off on purpose ─────────────────────────────────────────────
-# Design note: "we need to have a way of flagging services as
-# 'orchestrated' so they don't report as unhealthy when they are healthy,
-# just not on cause orchestration." llama, kokoro, whisper and comfy are
+# A service can be flagged 'orchestrated' so it does not report as unhealthy
+# when it is healthy and simply not on because of orchestration. llama, kokoro, whisper and comfy are
 # started by Lodestar when someone needs them and stopped when nobody does
 # (seren_sinew.orchestration). Between uses they are OFF, and off was read as
 # not_running, which made the node degraded and its health pill red for doing

@@ -1,9 +1,8 @@
 """
 `orchestrated`: a service Lodestar starts on demand is idle when off, not down.
 
-Design note: "we need to have a way of flagging services as 'orchestrated'
-so they don't report as unhealthy when they are healthy, just not on cause
-orchestration." Pinned here:
+A service can be flagged 'orchestrated' so it does not report as unhealthy
+when it is healthy and simply not on because of orchestration. Pinned here:
 
 - the flag rides on every status answer; off + orchestrated = idle
 - /system/health counts an idle service as idle, not not_running, and stays ok

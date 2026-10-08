@@ -16,7 +16,7 @@ have them), proxied. The Observatory finds the service from its manifest
 the manifest names, by the same rules the service reads it (inline, env var,
 keyring) - the way the Starwright cards' seren-mcp-headers helper does. No
 token is copied anywhere; Lodestar holds the Observatory's token and nothing
-else. Design note: Sinew holds the mechanism, services configure
+else. Sinew holds the mechanism, services configure
 themselves, Lodestar requests, pulls and stashes.
 
 The Observatory's own interlock applies: a POST (take a snapshot) needs the

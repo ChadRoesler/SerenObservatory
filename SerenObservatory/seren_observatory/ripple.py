@@ -8,7 +8,7 @@ WHY: the hippocampus asks the main model for a brief at bedtime and for a
 review when drafts wait - a ripple, after the sharp-wave ripples a sleeping
 hippocampus fires to reach the cortex. When both live on one box it runs the
 command itself. When they don't - the hippocampus on a Jetson, the model on
-someone's desktop (Design note:) - the hippocampus (or Lodestar,
+someone's desktop - the hippocampus (or Lodestar,
 routing it) POSTs the ripple here, and the Observatory starts the command AS
 the person.
 

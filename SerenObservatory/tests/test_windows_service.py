@@ -2,7 +2,7 @@
 windows_service: the Observatory drives a Windows box's NSSM services with
 sc.exe, unprivileged, through a per-service grant the Starwright card writes.
 
-Design note: (obs-win-manifests): nothing on Windows wrote a manifest, so
+Punch-list row obs-win-manifests: nothing on Windows wrote a manifest, so
 an Observatory there listed nothing it could start or stop. The PowerShell
 service core now writes one and grants the Observatory's account start, stop
 and query on that one service; these tests pin the Observatory's half.

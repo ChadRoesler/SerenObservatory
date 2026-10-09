@@ -148,7 +148,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
                             for label, p in manifests.rosters())
         node_file = html.escape(str(manifests.node_path()))
         return f"""<!doctype html>
-<html><head><title>SerenObservatory - {host}</title>
+<html><head><title>seren-observatory - {host}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <style>

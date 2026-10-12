@@ -36,12 +36,12 @@ dependencies = [
 	# Observatory's bearer is a ~/.seren/secrets.json safety interlock, not a
 	# Meninges-resolved config token. No [keyring] extra: this service never
 	# writes secrets to the OS keychain.
-	"seren-meninges>=2.2.0,<3",
+	"seren-meninges>=2.2.0,<6",
 	# Shared request logging - ONE copy across the family (SerenSinew),
 	# replacing the per-service request_log.py. env_prefix preserves
 	# Observatory's SEREN_AGENT_LOG_* contract; service_name resolves the
 	# log filename (-> observatory-requests.log).
-	"seren-sinew>=1.11.0,<2",  # 1.11.0: seren_sinew.orchestration (ensure); 1.8.0: seren_sinew.stores with snapshot archives (the tests stand a service up with it)
+	"seren-sinew>=1.11.0,<6",  # 1.11.0: seren_sinew.orchestration (ensure); 1.8.0: seren_sinew.stores with snapshot archives (the tests stand a service up with it)
 ]
 
 [project.optional-dependencies]

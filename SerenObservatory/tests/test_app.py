@@ -45,6 +45,17 @@ class TestPublicRoutes:
         assert 'name="color-scheme" content="dark"' in r.text and "--bg: #14141f" in r.text
         assert 'href="/viewer"' in r.text
 
+    async def test_viewer_tabs_switch_on_click(self, client):
+        """The Services tab did nothing: the shell styles .tab buttons and
+        activates the first, but wires no click, so each tab must carry its
+        own onclick through showTab. Pinned so a tab can never go dead again."""
+        r = await client.get("/viewer")
+        assert r.status_code == 200
+        for tab in ("system", "services"):
+            want = "data-tab=\"%s\" onclick=\"showTab('%s')\"" % (tab, tab)
+            assert want in r.text, f"{tab} tab has no click"
+        assert "function showTab" in r.text, "the shell must still provide showTab"
+
 
 class TestAuthOnProtectedRoutes:
     async def test_node_requires_auth(self, client):

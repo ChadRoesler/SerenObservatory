@@ -66,14 +66,21 @@ function renderVitals(node, thermal, health) {
     const rt = (node && node.runtime) || {};
     const maxT = thermal && thermal.available ? thermal.max_temp_c : null;
     const memP = rt.memory_pct_used;
+    // The percent alone hides the size of the box: 60% of a Nano is not 60% of
+    // the Spark. Say used/total beside it when the node reports both.
+    const gb = mb => (mb / 1024).toFixed(1);
+    const memLbl = (rt.memory_mb_total && rt.memory_mb_available != null)
+        ? `mem ${gb(rt.memory_mb_total - rt.memory_mb_available)}/${gb(rt.memory_mb_total)} GB`
+        : 'mem used';
+    const idleN = health && Array.isArray(health.idle) ? health.idle.length : 0;
     const load1 = Array.isArray(rt.load_avg) ? rt.load_avg[0] : null;
     const stat = (cls, big, lbl) => `<div class="stat ${cls}"><div class="big">${big}</div><div class="lbl">${lbl}</div></div>`;
     $('vitals').innerHTML = [
         stat(statTemp(maxT), maxT != null ? `${maxT}°` : '-', 'max temp'),
-        stat(statMem(memP), memP != null ? `${memP}%` : '-', 'mem used'),
+        stat(statMem(memP), memP != null ? `${memP}%` : '-', memLbl),
         stat('', load1 != null ? load1.toFixed(2) : '-', 'load 1m'),
         stat('', fmtUptime(rt.uptime_seconds), 'uptime'),
-        stat(health ? (health.ok ? 'ok' : 'hot') : '', health ? `${health.healthy}/${health.total}` : '-', 'healthy'),
+        stat(health ? (health.ok ? 'ok' : 'hot') : '', health ? `${health.healthy}/${health.total}` : '-', idleN ? `healthy, ${idleN} idle` : 'healthy'),
     ].join('');
 }
 

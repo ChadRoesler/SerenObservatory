@@ -24,6 +24,7 @@ import os
 import logging
 from pathlib import Path
 
+from SerenCorePrev.SerenMeninges.SerenMeninges.seren_meninges.viewer import _default_favicon
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
@@ -44,6 +45,7 @@ from seren_meninges.viewer import render_from_dir
 # hand-rolled importlib.metadata block that drifted from the others.
 APP_VERSION = get_version("seren-observatory", fallback=__version__)
 log = logging.getLogger("seren_observatory")
+ACCENT = "#f59056"
 
 def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     # cfg is accepted so the config-aware entry points (python -m seren_observatory)
@@ -147,15 +149,17 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
         roster = " + ".join(html.escape(f"{p}/*.json") + f" ({label})"
                             for label, p in manifests.rosters())
         node_file = html.escape(str(manifests.node_path()))
+        favIcon = _default_favicon(ACCENT)
         return f"""<!doctype html>
-<html><head><title>seren-observatory - {host}</title>
+<html><head><title>SerenObservatory - {host}</title>
+{favIcon}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <style>
   /* Dark, in the glance's own palette (viewer/ui/styles.css): this page is
      what a browser lands on at the node's address, usually at night. */
   :root {{ color-scheme: dark; --bg: #14141f; --panel: #1f2036; --line: #33365a;
-           --text: #e6e8f5; --muted: #9aa0c8; --accent: #6eff70; }}
+           --text: #e6e8f5; --muted: #9aa0c8; --accent: {ACCENT}; }}
   html {{ background: var(--bg); }}
   body {{ font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem;
           background: var(--bg); color: var(--text); line-height: 1.5; }}
@@ -211,8 +215,22 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
             accent="#f59056",
         )
 
+    # Upgrades (seren_observatory.upgrades): one job at a time per node. A job
+    # left "restarting" was this Observatory upgrading itself; the version that
+    # came up closes it.
+    from . import upgrades
+    from .upgrade_routes import router as upgrade_router
+    app.state.upgrader = upgrades.Upgrader()
+    try:
+        closed = upgrades.finish_self_upgrades()
+        if closed:
+            log.info("closed self-upgrade job(s): %s", ", ".join(closed))
+    except Exception as exc:  # noqa: BLE001 - a job file never stops the Observatory starting
+        log.info("could not read upgrade jobs (%s)", exc)
+
     # System routes (ping, version, node, services, health, reclaim)
     app.include_router(system_router)
+    app.include_router(upgrade_router)
 
     # Service routes: one universal router that discovers manifests per
     # request, plus the service-specific handlers (code, not installs).

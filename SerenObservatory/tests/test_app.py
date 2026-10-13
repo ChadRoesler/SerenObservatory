@@ -40,7 +40,7 @@ class TestPublicRoutes:
         r = await client.get("/")
         assert r.status_code == 200
         assert "text/html" in r.headers["content-type"]
-        assert "seren-observatory" in r.text
+        assert "SerenObservatory" in r.text
         # dark, in the glance's palette, and it points at the glance
         assert 'name="color-scheme" content="dark"' in r.text and "--bg: #14141f" in r.text
         assert 'href="/viewer"' in r.text

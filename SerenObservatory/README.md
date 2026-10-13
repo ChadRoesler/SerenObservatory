@@ -121,6 +121,27 @@ too) reports `idle` instead of `not_running`: `/system/health` lists it under
 badge rather than a red one. Flip it by hand with
 `POST /service/<name>/orchestrated {"orchestrated": true|false}`.
 
+**Upgrades.** `POST /service/<name>/upgrade {"version": "5.0.2"}` upgrades a
+pip-installed service as a job (`GET /upgrades/<id>` follows it): the
+service's own snapshot, its config and `.env` files held, `pip install
+--upgrade` with its extras plus `seren-sinew` and `seren-meninges`, an import
+check before any restart, then restart, health, and the config put back if
+anything changed it. Anything failing is rolled back: old versions, old config,
+restarted. Where the service came from is read from the Starwright install
+ledger (`~/.seren/installed`), so the GPU daemons the node installer builds are
+"not upgradable" here, and the answer says so. `"dry_run": true` returns pip's
+own plan. The Observatory can upgrade itself on systemd (the restart is handed
+to systemd, and the Observatory that comes back closes the job); on Windows use
+its Starwright card. Lodestar drives this across the cluster
+(`POST /api/v1/upgrade` there), with a copy pulled off the box first.
+Before anything is touched, the apps the new version talks to are checked:
+a reader lists them in its pyproject as a `peers` extra nobody installs
+(`peers = ["seren-memory>=5.2"]`), and when one is in the cluster but older,
+the job ends `held`, unchanged, with the reason; the installed metadata is
+checked again after pip. Lodestar sends the cluster's versions as `peers`;
+asked by hand it is this node's own. `GET /upgrades/versions` lists every
+service here an upgrade can see, its version and what it needs.
+
 ---
 
 ## What it logs (and where)

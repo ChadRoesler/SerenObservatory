@@ -24,7 +24,7 @@ import os
 import logging
 from pathlib import Path
 
-from SerenCorePrev.SerenMeninges.SerenMeninges.seren_meninges.viewer import _default_favicon
+from seren_meninges.viewer import _default_favicon
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 

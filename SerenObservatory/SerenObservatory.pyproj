@@ -23,6 +23,7 @@
     <Compile Include="seren_observatory\requirements.txt" />
     <Compile Include="seren_observatory\app.py" />
     <Compile Include="seren_observatory\auth.py" />
+    <Compile Include="seren_observatory\comfy_catalog.py" />
     <Compile Include="seren_observatory\lifecycle.py" />
     <Compile Include="seren_observatory\manifests.py" />
     <Compile Include="seren_observatory\service_routes.py" />

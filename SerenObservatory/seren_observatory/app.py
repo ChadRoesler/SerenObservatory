@@ -93,6 +93,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     # middleware's 503 message, and the root page - so what the operator is
     # told to write is exactly what was read.
     secrets_path = resolve_secrets_path(cfg.secrets_path)
+    app.state.secrets_path = secrets_path          # other per-node keys live there too (comfy's civitai_key)
     token = load_token(secrets_path)
     app.add_middleware(BearerAuthMiddleware, expected_token=token,
                        secrets_path=secrets_path)

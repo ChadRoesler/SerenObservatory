@@ -162,6 +162,13 @@ class _Scanner:
 
         def work() -> None:
             try:
+                if hash_what != "none" or civitai:
+                    # Headers first, written at once: a node whose models just
+                    # moved shows them in seconds, not after every LoRA is
+                    # hashed (the Spark's 228 GB, 15 Oct 2026, read as empty
+                    # for minutes). The second pass keeps what this one learned.
+                    self.run(root, "none", False, key, host)
+                    self.state.update(quick_pass=int(time.time()))
                 self.run(root, hash_what, civitai, key, host)
                 self.state.update(running=False, finished=int(time.time()))
             except Exception as ex:  # noqa: BLE001 - a failed scan is reported, never fatal

@@ -193,8 +193,13 @@ def is_self(inst: Install) -> bool:
 # ── running things (one seam, so tests replace it) ───────────────────────────
 
 def _run(argv: list[str], timeout: float) -> dict[str, Any]:
+    # UTF-8 both ways. On Windows a piped child writes cp1252, and pip's
+    # --report prints a "→" it cannot encode: every desktop plan died in pip
+    # with UnicodeEncodeError (found 14 Oct 2026, the first upgrade run).
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         return {"ok": False, "exit_code": None, "out": f"timed out after {timeout:.0f}s"}
     except OSError as e:

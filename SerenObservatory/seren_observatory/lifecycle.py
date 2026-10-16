@@ -82,13 +82,123 @@ def _lock_for(manifest: dict[str, Any]) -> asyncio.Lock:
 def proc_rss_mb(pid: int) -> int | None:
     """Resident Set Size in MB for a given PID. None if /proc unavailable."""
     try:
-        with open(f"/proc/{pid}/status") as f:
+        with open(PROC_ROOT / str(pid) / "status") as f:
             for line in f:
                 if line.startswith("VmRSS:"):
                     return int(line.split()[1]) // 1024
     except (OSError, ValueError, IndexError):
         pass
     return None
+
+
+# Where the kernel's bookkeeping is read from. Module-level so a test can
+# point them at a fake tree; on a box without them (Windows) every read
+# fails and the callers fall back.
+PROC_ROOT = Path("/proc")
+# cgroup v2 mounts everything at the first; v1 keeps a tree per controller
+# and the unit's processes are listed under each.
+CGROUP_ROOTS = (Path("/sys/fs/cgroup"), Path("/sys/fs/cgroup/memory"), Path("/sys/fs/cgroup/pids"),
+                Path("/sys/fs/cgroup/systemd"))
+
+
+def _proc_status_kb(pid: int) -> dict[str, int]:
+    """The kB fields of /proc/<pid>/status ({} when the process is gone)."""
+    out: dict[str, int] = {}
+    try:
+        with open(PROC_ROOT / str(pid) / "status") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 3 and parts[2] == "kB":
+                    out[parts[0].rstrip(":")] = int(parts[1])
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+def _proc_ppid(pid: int) -> int | None:
+    try:
+        with open(PROC_ROOT / str(pid) / "status") as f:
+            for line in f:
+                if line.startswith("PPid:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def proc_own_kb(pid: int) -> int | None:
+    """What a process holds for itself, in kB: anonymous pages plus shared
+    memory. Not RssFile - a mapped library or a model file is the page cache,
+    not the process, and is counted again in every process that maps it.
+    Older kernels (< 4.5) have only VmRSS; that is the fallback."""
+    kb = _proc_status_kb(pid)
+    if "RssAnon" in kb:
+        return kb["RssAnon"] + kb.get("RssShmem", 0)
+    return kb.get("VmRSS")
+
+
+def cgroup_pids(control_group: str) -> list[int] | None:
+    """The processes in a unit's cgroup (its ControlGroup property, e.g.
+    /system.slice/foo.service). None when no cgroup tree can be read."""
+    for root in CGROUP_ROOTS:
+        try:
+            text = (root / control_group.lstrip("/") / "cgroup.procs").read_text()
+            return [int(x) for x in text.split()]
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def cgroup_own_mb(control_group: str, exclude: set[int] | None = None) -> int | None:
+    """A unit's own resident memory in MB: the sum of proc_own_kb over the
+    processes in its cgroup, leaving out `exclude` and anything descended
+    from a pid in it.
+
+    Why not systemd's MemoryCurrent: that is the cgroup's charge, and the
+    charge includes the page cache. A service the observatory starts (comfy,
+    llama: `bash start_x.sh` is a child of the observatory, so it lands in
+    the observatory's cgroup) reads gigabytes of model files, every page
+    charged to the cgroup, and the kernel keeps charging them to it after the
+    child has exited - the observatory sat at 312 MB on a box where its
+    process held 49. The caller passes the other tracked services' pids as
+    `exclude`, so while comfy runs its memory is comfy's, not the
+    observatory's as well. None when the cgroup is not readable."""
+    pids = cgroup_pids(control_group)
+    if pids is None:
+        return None
+    exclude = set(exclude or ())
+    in_group = set(pids)
+    parent = {p: _proc_ppid(p) for p in pids}
+
+    def excluded(pid: int) -> bool:
+        seen = 0
+        while pid and pid in in_group and seen < len(in_group) + 1:
+            if pid in exclude:
+                return True
+            pid = parent.get(pid) or 0
+            seen += 1
+        return pid in exclude
+
+    total_kb = 0
+    for p in pids:
+        if excluded(p):
+            continue
+        total_kb += proc_own_kb(p) or 0
+    return total_kb // 1024
+
+
+def other_service_pids(manifest: dict[str, Any]) -> set[int]:
+    """The live pids of every OTHER pid_file service on this box: what to
+    leave out of a unit's memory when they run inside its cgroup."""
+    me = manifest.get("service")
+    out: set[int] = set()
+    for name, other in manifests.load_services().items():
+        if name == me or manifests.service_type(other) != "pid_file":
+            continue
+        pid = _pid_read(other)
+        if pid is not None:
+            out.add(pid)
+    return out
 
 
 def proc_uptime_seconds(pid: int) -> int | None:
@@ -533,12 +643,13 @@ async def _systemd_status(manifest: dict[str, Any]) -> dict[str, Any]:
             "systemd_unit": unit,
         }
 
-    # systemctl show gives us authoritative state. MemoryCurrent reflects
-    # the cgroup's memory which is accurate even for services that fork
-    # children. MainPID gives us a handle into /proc for CPU% + uptime.
-    # Both shellouts run in a worker thread - status is what Lodestar polls,
-    # and a poll must never be the thing that stalls the plane.
-    props = await asyncio.to_thread(_systemd_show, unit, ["MainPID", "MemoryCurrent"])
+    # systemctl show gives us authoritative state. ControlGroup names the
+    # cgroup whose processes are the service - children it forked included,
+    # which a MainPID RSS would miss. MainPID gives us a handle into /proc
+    # for CPU% + uptime. Both shellouts run in a worker thread - status is
+    # what Lodestar polls, and a poll must never be the thing that stalls
+    # the plane.
+    props = await asyncio.to_thread(_systemd_show, unit, ["MainPID", "MemoryCurrent", "ControlGroup"])
 
     main_pid_str = props.get("MainPID", "0")
     try:
@@ -546,13 +657,20 @@ async def _systemd_status(manifest: dict[str, Any]) -> dict[str, Any]:
     except ValueError:
         main_pid = 0
 
-    mem_bytes_str = props.get("MemoryCurrent", "")
-    try:
-        memory_mb: int | None = int(mem_bytes_str) // (1024 * 1024)
-    except ValueError:
-        # MemoryCurrent comes back as "[not set]" when cgroup accounting
-        # is off; fall back to RSS of the main process.
-        memory_mb = proc_rss_mb(main_pid) if main_pid > 0 else None
+    # Memory is what the unit's processes hold themselves (see cgroup_own_mb:
+    # MemoryCurrent counts the page cache too, and keeps counting a child's
+    # cache after the child is gone). Other tracked services that run inside
+    # this cgroup are theirs to report, not ours.
+    memory_mb: int | None = None
+    control_group = props.get("ControlGroup", "")
+    if control_group:
+        memory_mb = await asyncio.to_thread(cgroup_own_mb, control_group, other_service_pids(manifest))
+    if memory_mb is None:
+        try:
+            memory_mb = int(props.get("MemoryCurrent", "")) // (1024 * 1024)
+        except ValueError:
+            # "[not set]" when cgroup accounting is off: the main process's RSS.
+            memory_mb = proc_rss_mb(main_pid) if main_pid > 0 else None
 
     cpu = await proc_cpu_percent(main_pid) if main_pid > 0 else None
     uptime = proc_uptime_seconds(main_pid) if main_pid > 0 else None

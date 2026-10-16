@@ -31,12 +31,14 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 
 from . import manifests
 
 router = APIRouter(prefix="/api/v1/service", tags=["stores"])
 
 TIMEOUT = 120.0            # a snapshot copies a store; an archive carries one
+ARCHIVE_TIMEOUT = 1800.0   # an archive of pictures, streamed: a long read, never held whole
 REHEARSE_TIMEOUT = 900.0   # a rehearsal copies a store, opens it and replays its tombstones
 
 
@@ -128,16 +130,68 @@ async def post_snapshot(name: str, request: Request):
     return _relay(name, await _forward(name, "POST", "/stores/snapshot", {"reason": reason}))
 
 
+async def _stream(name: str, path: str, keep: tuple[str, ...], timeout: float = ARCHIVE_TIMEOUT) -> StreamingResponse:
+    """A GET to the service, its body streamed through: never held in this
+    process whole. A non-200 answer is relayed the way the JSON routes do."""
+    base, headers = _target(name)
+    client = httpx.AsyncClient(timeout=timeout)
+    try:
+        r = await client.send(client.build_request("GET", base + path, headers=headers), stream=True)
+    except httpx.RequestError as e:
+        await client.aclose()
+        raise HTTPException(502, f"{name} did not answer: {e}")
+    if r.status_code != 200:
+        await r.aread()
+        await r.aclose()
+        await client.aclose()
+        _relay(name, r, says_its_own_404=True)              # raises with the service's reason
+
+    async def body():
+        try:
+            async for chunk in r.aiter_bytes():
+                yield chunk
+        finally:
+            await r.aclose()
+            await client.aclose()
+    return StreamingResponse(body(), media_type=r.headers.get("content-type") or "application/octet-stream",
+                             headers={k: v for k, v in r.headers.items() if k.lower() in keep})
+
+
+# ── the gallery: what a Workbench's make_image kept, relayed ─────────────────
+# GET /api/v1/service/{name}/gallery[/{day}[/{name}]] -> the service's own
+# /gallery routes, with its own bearer, the file streamed. Lodestar fronts
+# this for the cluster (seren_lodestar.routes.gallery). 15 Oct 2026.
+_GALLERY_SEG = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+@router.get("/{name}/gallery")
+@router.get("/{name}/gallery/{rest:path}")
+async def get_gallery(name: str, rest: str = ""):
+    parts = [p for p in rest.split("/") if p]
+    if len(parts) > 2 or any(not _GALLERY_SEG.match(p) or ".." in p for p in parts):
+        raise HTTPException(400, "a gallery path is <day>[/<name>], with no path in either")
+    path = "/gallery" + "".join(f"/{p}" for p in parts)
+    if len(parts) == 2:
+        return await _stream(name, path, ("content-type", "content-length", "content-disposition",
+                                          "x-content-type-options", "content-security-policy"))
+    return _relay(name, await _forward(name, "GET", path), says_its_own_404=True)
+
+
 @router.get("/{name}/stores/snapshots/{snapshot_id}/archive")
-async def get_archive(name: str, snapshot_id: str):
+async def get_archive(name: str, snapshot_id: str, since: Optional[str] = None):
+    """One snapshot's archive, streamed through from the service: a store of
+    pictures is not held in this process whole. `since` (a snapshot the
+    puller holds) is passed on; the service answers with only what changed
+    and names the snapshot to link the rest from in X-Seren-Since (see
+    seren_sinew.stores). 15 Oct 2026."""
     if "/" in snapshot_id or "\\" in snapshot_id or ".." in snapshot_id:
         raise HTTPException(400, "a snapshot id has no path in it")
-    r = await _forward(name, "GET", f"/stores/snapshots/{snapshot_id}/archive")
-    if r.status_code != 200:
-        _relay(name, r)                                     # raises with the service's reason
-    return Response(content=r.content, media_type="application/gzip",
-                    headers={k: v for k, v in r.headers.items()
-                             if k.lower() in ("content-disposition", "x-seren-snapshot", "x-seren-service")})
+    since = (since or "").strip()
+    if "/" in since or "\\" in since or ".." in since:
+        raise HTTPException(400, "a snapshot id has no path in it")
+    path = f"/stores/snapshots/{snapshot_id}/archive" + (f"?since={since}" if since else "")
+    return await _stream(name, path, ("content-disposition", "content-length", "x-seren-snapshot",
+                                      "x-seren-service", "x-seren-since"))
 
 
 @router.post("/{name}/stores/snapshots/{snapshot_id}/rehearse")

@@ -116,6 +116,50 @@ async def test_the_archive_comes_back_whole(wired, tmp_path):
         assert (got / "raw" / "memory" / "voice.json").read_text() == "the card"
         assert (await c.get("/api/v1/service/SerenMemory-wren/stores/snapshots/nope/archive")).status_code == 404
         assert (await c.get("/api/v1/service/SerenMemory-wren/stores/snapshots/..%2Fx/archive")).status_code in (400, 404), "no path in a snapshot id"
+        # ?since= is passed on, and the service's answer about it comes back (15 Oct 2026)
+        second = keeper.snapshot("next")["id"]
+        r = await c.get(f"/api/v1/service/SerenMemory-wren/stores/snapshots/{second}/archive", params={"since": sid})
+        assert r.status_code == 200 and r.headers["x-seren-since"] == sid
+        linked = unpack_snapshot(r.content, tmp_path / "stash", expect_id=second, link_from=tmp_path / "stash" / sid)
+        assert (linked / "raw" / "memory" / "voice.json").read_text() == "the card"
+        assert (await c.get(f"/api/v1/service/SerenMemory-wren/stores/snapshots/{second}/archive",
+                            params={"since": "../x"})).status_code == 400
+
+
+async def test_the_gallery_is_relayed_and_the_file_streamed(wired, service):
+    """15 Oct 2026: a Workbench's /gallery routes through the Observatory,
+    the picture streamed with its headers, a bad path refused here."""
+    app, keeper, calls = wired
+    service_app, _ = service
+    from starlette.responses import JSONResponse as _J, Response as _R
+    from starlette.routing import Route
+    PNG = bytes.fromhex("89504e470d0a1a0a") + b"\x00" * 40
+
+    async def gallery(request):
+        return _J({"gallery": "/g", "days": [{"day": "2026-10-15", "pictures": 1}], "count": 1})
+
+    async def day(request):
+        return _J({"day": request.path_params["day"], "count": 1, "pictures": [{"file": "a.png", "bytes": 48}]})
+
+    async def picture(request):
+        if request.path_params["name"] != "a.png":
+            return _J({"detail": "no such picture"}, status_code=404)
+        return _R(PNG, media_type="image/png", headers={"X-Content-Type-Options": "nosniff"})
+    # the stand-in service grows gallery routes for this test
+    service_app.router.routes[:0] = [Route("/gallery", gallery), Route("/gallery/{day}", day),
+                                     Route("/gallery/{day}/{name}", picture)]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=OBS) as c:
+        r = await c.get("/api/v1/service/SerenMemory-wren/gallery")
+        assert r.status_code == 200 and r.json()["count"] == 1
+        assert calls[-1][2]["Authorization"] == "Bearer svc-secret", "the service's own bearer"
+        r = await c.get("/api/v1/service/SerenMemory-wren/gallery/2026-10-15")
+        assert r.status_code == 200 and r.json()["pictures"][0]["file"] == "a.png"
+        r = await c.get("/api/v1/service/SerenMemory-wren/gallery/2026-10-15/a.png")
+        assert r.status_code == 200 and r.content == PNG and r.headers["content-type"] == "image/png"
+        assert r.headers["x-content-type-options"] == "nosniff"
+        assert (await c.get("/api/v1/service/SerenMemory-wren/gallery/2026-10-15/b.png")).status_code == 404
+        assert (await c.get("/api/v1/service/SerenMemory-wren/gallery/2026-10-15/a/b/c.png")).status_code == 400
+        assert (await c.get("/api/v1/service/SerenMemory-wren/gallery/..%2Fx")).status_code == 400
 
 
 async def test_plain_answers_for_the_three_ways_it_cannot(wired, fake_home, monkeypatch):

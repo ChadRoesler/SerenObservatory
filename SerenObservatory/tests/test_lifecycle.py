@@ -12,7 +12,10 @@ tests read like the incidents they pin:
     unless told otherwise, and says why;
   - a manifest dropped in after boot is controllable on the next request;
   - a start that ran and failed is a 200 with the stderr, not a 500;
-  - an update package may not land outside the home directory.
+  - an update package may not land outside the home directory;
+  - a systemd unit's memory is what its own processes hold, not the page
+    cache a child left charged to its cgroup, and not another service that
+    runs inside it.
 """
 from __future__ import annotations
 
@@ -318,3 +321,82 @@ async def test_pid_health_without_manifest_hints_is_unchanged(probes):
     r = await lifecycle._pid_port_health({"service": "x", "port": 8080})
     assert r["ok"] and r["probed_path"] == "/health"
     assert probes == ["http://127.0.0.1:8080/health"]
+
+
+# ── systemd memory: the unit's own, not its cgroup's charge ──────────────
+
+MB = 1024 * 1024
+
+
+def _fake_proc(root: Path, pid: int, ppid: int, *, anon_kb: int, file_kb: int = 0, shmem_kb: int = 0, old_kernel=False):
+    d = root / "proc" / str(pid)
+    d.mkdir(parents=True)
+    lines = [f"Name:\tp{pid}", f"PPid:\t{ppid}", f"VmRSS:\t{anon_kb + file_kb + shmem_kb} kB"]
+    if not old_kernel:
+        lines += [f"RssAnon:\t{anon_kb} kB", f"RssFile:\t{file_kb} kB", f"RssShmem:\t{shmem_kb} kB"]
+    (d / "status").write_text("\n".join(lines) + "\n")
+
+
+def _fake_cgroup(root: Path, control_group: str, pids: list[int]):
+    d = root / "cgroup" / control_group.lstrip("/")
+    d.mkdir(parents=True)
+    (d / "cgroup.procs").write_text("".join(f"{p}\n" for p in pids))
+
+
+@pytest.fixture()
+def box(tmp_path, monkeypatch):
+    """A fake /proc and cgroup tree the memory helpers read instead of the box."""
+    monkeypatch.setattr(lifecycle, "PROC_ROOT", tmp_path / "proc")
+    monkeypatch.setattr(lifecycle, "CGROUP_ROOTS", (tmp_path / "cgroup",))
+    return tmp_path
+
+
+def test_a_process_is_its_anonymous_memory_not_the_files_it_maps(box):
+    _fake_proc(box, 10, 1, anon_kb=49 * 1024, file_kb=16 * 1024, shmem_kb=1024)
+    _fake_proc(box, 11, 1, anon_kb=0, file_kb=0, old_kernel=True)
+    (box / "proc" / "11" / "status").write_text("Name:\told\nPPid:\t1\nVmRSS:\t3072 kB\n")
+    assert lifecycle.proc_own_kb(10) == 50 * 1024          # anon + shmem, not the mapped files
+    assert lifecycle.proc_own_kb(11) == 3072               # a kernel without RssAnon: VmRSS
+    assert lifecycle.proc_own_kb(12) is None               # gone
+
+
+def test_cgroup_memory_leaves_out_another_service_and_its_children(box):
+    """The observatory (10) started comfy with `bash start_comfy.sh` (20),
+    which is comfy itself (30) and a worker it forked (31) - all four in the
+    observatory's cgroup. Comfy's pid is comfy's to report."""
+    cg = "/system.slice/node-plane.service"
+    _fake_proc(box, 10, 1, anon_kb=49 * 1024, file_kb=16 * 1024)
+    _fake_proc(box, 20, 10, anon_kb=2 * 1024)
+    _fake_proc(box, 30, 20, anon_kb=1500 * 1024, file_kb=900 * 1024)
+    _fake_proc(box, 31, 30, anon_kb=500 * 1024)
+    _fake_cgroup(box, cg, [10, 20, 30, 31])
+    assert lifecycle.cgroup_own_mb(cg, exclude={30}) == 51
+    assert lifecycle.cgroup_own_mb(cg) == 2051
+    assert lifecycle.cgroup_own_mb("/system.slice/nope.service") is None
+
+
+async def test_systemd_status_reports_the_units_own_memory(box, fake_home, monkeypatch):
+    """What the box showed: MemoryCurrent at 335 MB for a process holding 49,
+    the rest page cache a finished comfy run left charged to the cgroup."""
+    cg = "/system.slice/node-plane.service"
+    comfy_pid = os.getpid()                                  # _pid_read checks the pid is alive
+    _fake_proc(box, 10, 1, anon_kb=49 * 1024, file_kb=16 * 1024)
+    _fake_proc(box, comfy_pid, 10, anon_kb=1500 * 1024)
+    _fake_cgroup(box, cg, [10, comfy_pid])
+    comfy = _manifest(fake_home, "comfy", port=0)
+    (fake_home / "comfy.pid").write_text(str(comfy_pid))
+    plane = {"service": "node-plane", "service_type": "systemd", "systemd_unit": "node-plane"}
+    monkeypatch.setattr(lifecycle, "_systemd_is_active", lambda unit: True)
+    shown = {"MainPID": "10", "MemoryCurrent": str(335 * MB), "ControlGroup": cg}
+    monkeypatch.setattr(lifecycle, "_systemd_show", lambda unit, props: dict(shown))
+
+    st = await lifecycle._systemd_status(plane)
+    assert st["running"] and st["memory_mb"] == 49, st
+
+    shown["ControlGroup"] = "/system.slice/unreadable.service"     # no cgroup tree to read: systemd's number
+    assert (await lifecycle._systemd_status(plane))["memory_mb"] == 335
+    shown["ControlGroup"] = ""
+    shown["MemoryCurrent"] = "[not set]"                           # accounting off and no cgroup: the main process
+    assert (await lifecycle._systemd_status(plane))["memory_mb"] == 65
+    assert lifecycle.other_service_pids(plane) == {comfy_pid}
+    assert lifecycle.other_service_pids(comfy) == set()

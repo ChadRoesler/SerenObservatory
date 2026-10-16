@@ -906,12 +906,29 @@ def pid_alive(pid: int) -> bool:
             return code.value == _STILL_ACTIVE
         finally:
             k32.CloseHandle(handle)
+    # A child of ours that has ended is a ZOMBIE until it is reaped, and a
+    # zombie still answers os.kill(pid, 0): the stopped app read as alive and
+    # stop reported failure (CI, 16 Oct 2026). Reap it if it is ours; if it
+    # is someone else's, /proc says whether it is a corpse.
+    try:
+        done, _status = os.waitpid(pid, os.WNOHANG)
+        if done == pid:
+            return False
+    except ChildProcessError:
+        pass
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True                                        # someone else's, but there
+    try:
+        with open(PROC_ROOT / str(pid) / "stat") as f:
+            fields = f.read().rsplit(")", 1)[-1].split()
+        if fields and fields[0] == "Z":
+            return False
+    except (OSError, IndexError):
+        pass
     return True
 
 

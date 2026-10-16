@@ -9,6 +9,8 @@ Path C dispatcher: service_type drives which handler does the work.
     systemd         → _systemd_* family. systemctl-managed unit.
     docker_compose  → _docker_* family. compose stack containers.
     windows_service → _windows_* family. an SCM service (NSSM) via sc.exe.
+    launcher        → _launcher_* family. a per-user app started detached,
+                      known by the pid file it writes (Symposium's tray).
 
 The public functions (start, stop, restart, status, tail_log) read the
 service_type from the manifest and dispatch. Adding a new type means
@@ -859,6 +861,204 @@ async def _windows_status(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 # ═════════════════════════════════════════════════════════════════════
+# LAUNCHER handler family - a per-user app, started detached
+# ═════════════════════════════════════════════════════════════════════
+#
+# For a program that belongs to the person logged in rather than to the box:
+# a tray app on a desktop (Symposium). It cannot be a Windows service - a
+# service has no desktop session, so no tray icon and no window - and there
+# is no `systemd --user` to lean on across the family's platforms. So the
+# Observatory starts it itself, DETACHED (its own session or process group,
+# no console, nothing of ours inherited), and the app writes a pid file the
+# manifest names. That file is the handle for status and stop.
+#
+# Required manifest fields: start_command (an argv list), pid_path.
+# Optional: cwd; port and health_url (status probes it); log_path (tail_log);
+# start_timeout_seconds (how long the pid file may take; default 30).
+#
+# Why: without it the only thing a desktop's Observatory could see was
+# itself, and the app people actually use there was upgraded by hand or not
+# at all. With a manifest it is a service like the rest - Lodestar's upgrade
+# stops it, pip moves it, this starts it, health is checked, a failure rolls
+# back (seren_observatory.upgrades) - and it shows in every viewer.
+
+_LAUNCHER_WAIT_S = 30.0
+_LAUNCHER_STOP_S = 15.0
+_STILL_ACTIVE = 259           # GetExitCodeProcess, for a process that has not ended
+
+
+def pid_alive(pid: int) -> bool:
+    """Whether a process with this pid exists. On Windows `os.kill(pid, 0)`
+    is NOT a probe - it TERMINATES the process - so the handle is opened and
+    asked instead."""
+    if not pid or pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32                      # type: ignore[attr-defined]
+        handle = k32.OpenProcess(0x1000, False, pid)      # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == _STILL_ACTIVE
+        finally:
+            k32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True                                        # someone else's, but there
+    return True
+
+
+def _launcher_pid(manifest: dict[str, Any]) -> int | None:
+    """The live pid the app's pid file names, else None (no file, no
+    number, or a process that is gone - a stale file after a crash)."""
+    path = manifest.get("pid_path")
+    if not path or not Path(path).is_file():
+        return None
+    try:
+        pid = int(Path(path).read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        return None
+    return pid if pid > 0 and pid_alive(pid) else None
+
+
+def _launcher_command(manifest: dict[str, Any]) -> list[str] | None:
+    cmd = manifest.get("start_command")
+    if isinstance(cmd, list) and cmd and all(isinstance(c, (str, int, float)) for c in cmd):
+        return [str(c) for c in cmd]
+    return None
+
+
+def _launcher_start(manifest: dict[str, Any]) -> dict[str, Any]:
+    cmd = _launcher_command(manifest)
+    if not cmd:
+        return {"ok": False, "error": "manifest missing start_command (an argv list)"}
+    pid_path = manifest.get("pid_path")
+    if not pid_path:
+        return {"ok": False, "error": "manifest missing pid_path"}
+    pid = _launcher_pid(manifest)
+    if pid:
+        return {"ok": True, "already_running": True, "pid": pid}
+    try:
+        Path(pid_path).unlink(missing_ok=True)             # a file left by a process that is gone
+    except OSError:
+        pass
+    kw: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL,
+                          "cwd": manifest.get("cwd") or None, "close_fds": True}
+    if os.name == "nt":
+        kw["creationflags"] = 0x00000008 | 0x00000200       # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    else:
+        kw["start_new_session"] = True
+    try:
+        proc = subprocess.Popen(cmd, **kw)
+    except OSError as ex:
+        return {"ok": False, "error": f"could not start {cmd[0]}: {ex}"}
+    wait = float(manifest.get("start_timeout_seconds") or _LAUNCHER_WAIT_S)
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        pid = _launcher_pid(manifest)
+        if pid:
+            return {"ok": True, "pid": pid, "spawned": proc.pid}
+        # The command may be a launcher that hands off and exits 0; only a
+        # failure exit ends the wait early.
+        if proc.poll() is not None and proc.returncode != 0:
+            return {"ok": False, "exit_code": proc.returncode,
+                    "error": f"{cmd[0]} exited {proc.returncode} before writing {pid_path}"}
+        time.sleep(0.2)
+    return {"ok": False, "spawned": proc.pid, "error": f"no live pid in {pid_path} within {wait:.0f}s"}
+
+
+def _terminate(pid: int) -> dict[str, Any]:
+    """Ask the process to stop, then make it. Windows: taskkill /T takes the
+    tree (the app and the window it opened). Elsewhere SIGTERM, SIGKILL after
+    _LAUNCHER_STOP_S."""
+    if os.name == "nt":
+        try:
+            r = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, timeout=30)
+        except (subprocess.TimeoutExpired, FileNotFoundError) as ex:
+            return {"ok": False, "error": f"taskkill: {type(ex).__name__}"}
+        return {"ok": r.returncode == 0 or not pid_alive(pid), "stdout": r.stdout.strip(), "stderr": r.stderr.strip()}
+    import signal
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return {"ok": True}
+    except PermissionError as ex:
+        return {"ok": False, "error": f"not allowed to stop pid {pid}: {ex}"}
+    deadline = time.monotonic() + _LAUNCHER_STOP_S
+    while time.monotonic() < deadline:
+        if not pid_alive(pid):
+            return {"ok": True}
+        time.sleep(0.2)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return {"ok": True}
+    return {"ok": True, "killed": True}
+
+
+def _launcher_stop(manifest: dict[str, Any]) -> dict[str, Any]:
+    pid = _launcher_pid(manifest)
+    if pid is None:
+        return {"ok": True, "was_running": False}
+    res = _terminate(pid)
+    deadline = time.monotonic() + _LAUNCHER_STOP_S
+    while pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    if pid_alive(pid):
+        return {**res, "ok": False, "was_running": True,
+                "error": f"pid {pid} is still alive {_LAUNCHER_STOP_S:.0f}s after being told to stop"}
+    try:
+        Path(manifest["pid_path"]).unlink(missing_ok=True)   # the app may not have got to it
+    except OSError:
+        pass
+    return {**res, "ok": True, "was_running": True, "pid": pid}
+
+
+def _launcher_restart(manifest: dict[str, Any]) -> dict[str, Any]:
+    stop_res = _launcher_stop(manifest)
+    if not stop_res.get("ok"):
+        return {"ok": False, "stop": stop_res, "start": None,
+                "error": "stop failed - not starting on top of it: "
+                         + str(stop_res.get("error") or stop_res.get("stderr") or "see stop")}
+    port = int(manifest.get("port") or 0)
+    released = _wait_for_port_release(port, timeout_s=10.0)
+    if not released:
+        return {"ok": False, "stop": stop_res, "start": None,
+                "error": f"port {port} still held 10s after stop - refusing to start"}
+    start_res = _launcher_start(manifest)
+    return {"ok": start_res.get("ok", False), "error": start_res.get("error"),
+            "stop": stop_res, "start": start_res, "port_released": released}
+
+
+async def _launcher_status(manifest: dict[str, Any]) -> dict[str, Any]:
+    base = {"service": manifest.get("service"), "service_type": "launcher"}
+    if not manifest.get("pid_path"):
+        return {**base, "running": False, "error": "manifest missing pid_path"}
+    pid = await asyncio.to_thread(_launcher_pid, manifest)
+    if pid is None:
+        return {**base, "running": False}
+    port_health = None
+    if manifests.service_has_port(manifest):
+        health_url = manifest.get("health_url")
+        port_health = await (_http_probe(health_url) if health_url else _pid_port_health(manifest))
+    # Memory, CPU and uptime come from /proc; Windows has none, so None there
+    # rather than a guess (as for a windows_service).
+    unix = os.name != "nt"
+    return {**base, "running": True, "pid": pid,
+            "memory_mb": proc_rss_mb(pid) if unix else None,
+            "cpu_percent": (await proc_cpu_percent(pid)) if unix else None,
+            "uptime_seconds": proc_uptime_seconds(pid) if unix else None,
+            "port_health": port_health}
+
+
+# ═════════════════════════════════════════════════════════════════════
 # DOCKER_COMPOSE handler family - containers in a compose stack
 # ═════════════════════════════════════════════════════════════════════
 #
@@ -1287,6 +1487,7 @@ def _start_sync(manifest: dict[str, Any]) -> dict[str, Any]:
     if stype == "systemd":       return _systemd_start(manifest)
     if stype == "windows_service": return _windows_start(manifest)
     if stype == "docker_compose": return _docker_start(manifest)
+    if stype == "launcher":      return _launcher_start(manifest)
     return {"ok": False, "error": f"unknown service_type: {stype}"}
 
 
@@ -1297,6 +1498,7 @@ def _stop_sync(manifest: dict[str, Any]) -> dict[str, Any]:
     if stype == "systemd":       return _systemd_stop(manifest)
     if stype == "windows_service": return _windows_stop(manifest)
     if stype == "docker_compose": return _docker_stop(manifest)
+    if stype == "launcher":      return _launcher_stop(manifest)
     return {"ok": False, "error": f"unknown service_type: {stype}"}
 
 
@@ -1357,6 +1559,7 @@ def _restart_sync(manifest: dict[str, Any]) -> dict[str, Any]:
     if stype == "systemd":        return _systemd_restart(manifest)
     if stype == "windows_service": return _windows_restart(manifest)
     if stype == "docker_compose": return _docker_restart(manifest)
+    if stype == "launcher":       return _launcher_restart(manifest)
     return {"ok": False, "error": f"unknown service_type: {stype}"}
 
 
@@ -1455,6 +1658,7 @@ async def _status_by_type(manifest: dict[str, Any]) -> dict[str, Any]:
     if stype == "systemd":        return await _systemd_status(manifest)
     if stype == "windows_service": return await _windows_status(manifest)
     if stype == "docker_compose": return await _docker_status(manifest)
+    if stype == "launcher":       return await _launcher_status(manifest)
     return {
         "service": manifest.get("service"),
         "service_type": stype,

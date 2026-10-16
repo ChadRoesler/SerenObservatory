@@ -72,6 +72,17 @@ operations to the right handler:
                       also grants the Observatory's account start/stop/query
                       on that one service.
 
+    launcher        - A per-user app rather than a service of the box: a tray
+                      app on a desktop (Symposium), which no Windows service
+                      can host (no desktop session, no tray). The Observatory
+                      starts it detached and knows it by the pid file it
+                      writes. Lifecycle = start the command / terminate the
+                      pid; status from the pid file + the port.
+                      Required manifest fields: start_command (argv list),
+                      pid_path. Optional: cwd, port, health_url, log_path,
+                      start_timeout_seconds. Written by the Symposium card
+                      (seren-symposium-setup.ps1).
+
 Manifests without `service_type` are treated as `pid_file` - keeps every
 existing manifest on every Jetson working without rewrites.
 ────────────────────────────────────────────────────────────────────────
@@ -130,7 +141,7 @@ SCHEMA_VERSION = 2
 
 # Valid service_type values. Anything else is treated as an error at lifecycle
 # dispatch time (handler returns {"ok": False, "error": "unknown service_type"}).
-SERVICE_TYPES = {"pid_file", "library", "systemd", "docker_compose", "windows_service"}
+SERVICE_TYPES = {"pid_file", "library", "systemd", "docker_compose", "windows_service", "launcher"}
 
 
 def node_path() -> Path:

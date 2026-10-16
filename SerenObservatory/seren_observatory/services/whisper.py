@@ -30,10 +30,18 @@ def register(router: APIRouter) -> None:
         impl = manifest.get("implementation", "")
         spec = manifest.get("serviceSpecific", {})
 
-        # whisper.cpp on Nano: models live as ggml-*.bin in <source_dir>/models
+        # whisper.cpp: models live as ggml-*.bin beside the one the manifest
+        # points at (prepare-node writes model_path, not source_dir), or in
+        # <source_dir>/models for a manifest that still says source_dir.
         if "whisper.cpp" in impl:
             source_dir = spec.get("source_dir", "")
-            models_dir = Path(source_dir) / "models" if source_dir else None
+            model_path = spec.get("model_path", "")
+            if model_path:
+                models_dir = Path(model_path).parent
+            elif source_dir:
+                models_dir = Path(source_dir) / "models"
+            else:
+                models_dir = None
             if not models_dir or not models_dir.is_dir():
                 return {"models": [], "implementation": impl,
                         "note": "models directory not found"}

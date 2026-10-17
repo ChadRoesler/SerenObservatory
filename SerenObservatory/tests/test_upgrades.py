@@ -14,8 +14,10 @@ the ledger lookup, the job file, the config copies, the put-back. Pinned here:
 - health fails: the old versions pinned back, the config put back, restarted
 - something changed the config: the copy goes back, what was there is kept
 - a service that keeps stores and will not snapshot is not upgraded
-- the Observatory upgrading itself hands the restart to systemd and the next
-  Observatory closes the job
+- the Observatory upgrading itself hands the restart to what started it and
+  the next Observatory closes the job: systemd on Linux; on Windows it proves
+  NSSM is minding it with a Restart policy and exits, else rolls back; as a
+  pid file or a launcher it refuses, nothing would start it again
 - requests are checked before anything reaches pip; POST needs the token
 - peers: a version that needs a newer Memory or Loci than the cluster runs is
   held before anything is touched (pip's dry run says what it needs); the
@@ -310,12 +312,6 @@ async def test_the_observatory_upgrading_itself_hands_the_restart_to_systemd(box
     ledger["venv"] = sys.prefix                       # this very Observatory
     box.ledger.write_text(json.dumps(ledger))
     monkeypatch.setattr(upgrades, "venv_python", lambda v: sys.executable)
-    if os.name == "nt":
-        app = create_app()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            r = await c.post("/api/v1/service/seren-memory-wren/upgrade", json={}, headers=OBS)
-        assert r.status_code == 409 and "Starwright" in r.json()["error"]
-        return
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         r = await c.post("/api/v1/service/seren-memory-wren/upgrade", json={"version": "5.0.1"}, headers=OBS)
@@ -325,6 +321,105 @@ async def test_the_observatory_upgrading_itself_hands_the_restart_to_systemd(box
     monkeypatch.setattr("importlib.metadata.version", lambda d: "5.0.1")
     assert upgrades.finish_self_upgrades() == [job["id"]]
     assert upgrades.load(job["id"]).state == "done"
+
+
+def _itself_as(box, fake_home, monkeypatch, service_type, **more):
+    """The ledger says the service is this very Observatory; the manifest
+    says how it is run."""
+    ledger = json.loads(box.ledger.read_text())
+    ledger["venv"] = sys.prefix
+    box.ledger.write_text(json.dumps(ledger))
+    monkeypatch.setattr(upgrades, "venv_python", lambda v: sys.executable)
+    m = fake_home / ".seren" / "services" / "seren-memory-wren.json"
+    manifest = json.loads(m.read_text())
+    manifest.pop("systemd_unit", None)
+    manifest.update(service_type=service_type, **more)
+    m.write_text(json.dumps(manifest))
+
+
+def _nssm(monkeypatch, policy="Restart", ppid=None, state="RUNNING"):
+    """What sc.exe and the registry would say, and the exit as a record."""
+    pid = os.getppid() if ppid is None else ppid
+    monkeypatch.setattr(lifecycle, "_sc_query", lambda name: (state, pid))
+    monkeypatch.setattr(upgrades, "nssm_exit_policy", lambda name: {"policy": policy, "source": "registry"})
+    left = []
+    monkeypatch.setattr(upgrades, "_exit_process", lambda: left.append(True))
+    monkeypatch.setattr(upgrades, "EXIT_GRACE_S", 0.0)
+    return left
+
+
+async def test_on_windows_the_observatory_proves_nssm_is_minding_it_and_leaves(box, fake_home, monkeypatch):
+    _itself_as(box, fake_home, monkeypatch, "windows_service", windows_service="SerenObservatory-wren")
+    left = _nssm(monkeypatch)
+    stops = []
+
+    async def stop(manifest):
+        stops.append(manifest["service"])
+        return {"ok": True}
+    monkeypatch.setattr(lifecycle, "stop", stop)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.post("/api/v1/service/seren-memory-wren/upgrade", json={"version": "5.0.1"}, headers=OBS)
+        assert r.status_code == 202, r.json()
+        job = await _finish(c, r.json()["job"]["id"])
+        await asyncio.sleep(0.05)
+    assert job["state"] == "restarting" and job["self_upgrade"]
+    restart = [n for n in job["steps"] if n["step"] == "restart"][0]
+    assert restart["handed_to"] == "nssm" and restart["service"] == "SerenObservatory-wren"
+    assert restart["exit_policy"]["policy"] == "Restart"
+    # not stopped before pip (that would end the upgrade itself), not sc-restarted
+    # after it (the stop would kill this process and nothing would run the start):
+    # the new files went in under the running process, and then it left
+    assert stops == [] and box.restarts == 0 and left == [True]
+    assert box.versions["seren-memory"] == "5.0.1"
+    # the next Observatory starts, reads the job and closes it on the version that came up
+    monkeypatch.setattr("importlib.metadata.version", lambda d: "5.0.1")
+    assert upgrades.finish_self_upgrades() == [job["id"]]
+    assert upgrades.load(job["id"]).state == "done"
+
+
+async def test_an_nssm_that_would_not_start_it_again_means_a_rollback_not_an_exit(box, fake_home, monkeypatch):
+    _itself_as(box, fake_home, monkeypatch, "windows_service", windows_service="SerenObservatory-wren")
+    left = _nssm(monkeypatch, policy="Exit")
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.post("/api/v1/service/seren-memory-wren/upgrade", json={"version": "5.0.1"}, headers=OBS)
+        job = await _finish(c, r.json()["job"]["id"])
+        await asyncio.sleep(0.05)
+    assert job["state"] == "rolled_back" and "exit policy is Exit" in job["error"]
+    assert left == [] and box.restarts == 0, "the old code is still running; leaving would have killed it"
+    assert box.versions["seren-memory"] == "5.0.0", "the packages went back"
+
+
+def test_the_handoff_check_on_its_own(monkeypatch):
+    m = {"service": "seren-observatory-wren", "service_type": "windows_service",
+         "windows_service": "SerenObservatory-wren"}
+    _nssm(monkeypatch)
+    assert upgrades.nssm_handoff_check(m)["ok"]
+    # someone else's process is the service: exiting would restart nothing
+    _nssm(monkeypatch, ppid=os.getppid() + 100000)
+    out = upgrades.nssm_handoff_check(m)
+    assert not out["ok"] and "not SerenObservatory-wren's program" in out["error"]
+    _nssm(monkeypatch, state="STOPPED")
+    assert "not RUNNING" in upgrades.nssm_handoff_check(m)["error"]
+    assert upgrades.nssm_handoff_check({"service": "x", "service_type": "windows_service"})["error"] \
+        == "manifest missing windows_service"
+    # the registry read itself: a real key or NSSM's default on Windows, honest off it
+    monkeypatch.undo()
+    pol = upgrades.nssm_exit_policy("SerenNoSuchService-zz9")
+    if os.name == "nt":
+        assert pol == {"policy": "Restart", "source": "nssm default (no AppExit key)"}
+    else:
+        assert "not Windows" in pol["error"]
+
+
+async def test_run_from_a_pid_file_the_observatory_still_refuses_to_upgrade_itself(box, fake_home, monkeypatch):
+    _itself_as(box, fake_home, monkeypatch, "pid_file", pid_path=str(fake_home / "obs.pid"))
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.post("/api/v1/service/seren-memory-wren/upgrade", json={}, headers=OBS)
+    assert r.status_code == 409 and "Starwright" in r.json()["error"]
+    assert box.installs() == []
 
 
 # ── peers ────────────────────────────────────────────────────────────────────

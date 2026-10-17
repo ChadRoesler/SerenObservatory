@@ -64,14 +64,24 @@ can upgrade (llama, kokoro and the rest are built by the node installer, not
 pip), and the answer says so.
 
 ITSELF. The Observatory upgrading itself installs, preflights, writes the job
-as "restarting" and asks systemd to restart its unit: the restart is a job in
-PID 1, so it finishes after this process is gone. The next Observatory to start
-reads the job, checks the version that came up, and closes it. Not on Windows:
-a running service's files are locked there, and nothing would be left to start
-it again; the Starwright card upgrades it.
+as "restarting" and hands the restart to whatever started it: the restart is
+someone else's job, so it finishes after this process is gone. The next
+Observatory to start reads the job, checks the version that came up, and
+closes it. Under systemd that is `systemctl restart` of its own unit. Under
+Windows (an NSSM service) it is the exit policy: NSSM starts its program
+again when it exits (AppExit Default = Restart, which is also NSSM's own
+default), so the Observatory proves it is that program (its parent is the
+service's process) and that the policy is Restart, then exits. Either proof
+failing rolls the packages back and says why, the old code still running.
+Until 16 Oct 2026 Windows refused outright ("the Starwright card upgrades
+it"), on the belief that nothing would be left to start it again. NSSM is.
+Anything else (a pid file, a launcher) still refuses: nothing would restart it.
 
 WINDOWS. pip cannot replace a .pyd a running process has loaded, so on
-Windows a service is stopped before the install and started after it.
+Windows a service is stopped before the install and started after it. Not
+itself: its own upgrade moves pure-Python packages under the running process
+(.py files are not locked), and a compiled dependency that is would fail in
+pip and be rolled back before any restart.
 """
 from __future__ import annotations
 
@@ -188,6 +198,66 @@ def find_install(manifest: dict[str, Any]) -> Optional[Install]:
 def is_self(inst: Install) -> bool:
     """True when the install is the venv this Observatory runs from."""
     return _same(inst.venv, sys.prefix)
+
+
+# ── handing its own restart to NSSM (Windows) ────────────────────────────────
+
+SELF_RESTART_TYPES = ("systemd", "windows_service")
+NSSM_DEFAULT_EXIT = "Restart"
+
+
+def nssm_exit_policy(service: str) -> dict[str, Any]:
+    """What NSSM does when the service's program exits: the default value of
+    HKLM\\SYSTEM\\CurrentControlSet\\Services\\<name>\\Parameters\\AppExit
+    (`nssm set <name> AppExit Default <action>`). No key: NSSM's own default,
+    Restart. Read-only, no admin needed. {"policy", "source"}, or {"error"}
+    off Windows."""
+    try:
+        import winreg  # Windows only
+    except ImportError:
+        return {"error": "no registry here: not Windows"}
+    path = "SYSTEM\\CurrentControlSet\\Services\\" + service + "\\Parameters\\AppExit"
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+            value, _ = winreg.QueryValueEx(key, "")
+        return {"policy": str(value), "source": "registry"}
+    except FileNotFoundError:
+        return {"policy": NSSM_DEFAULT_EXIT, "source": "nssm default (no AppExit key)"}
+    except OSError as e:
+        return {"error": f"could not read the service's AppExit: {e}"}
+
+
+def nssm_handoff_check(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Can this process hand its restart to NSSM by exiting? Yes when the
+    manifest names a Windows service, that service is RUNNING, its process
+    is this process's parent (so this IS the program NSSM is minding), and
+    NSSM's exit policy is Restart. {"ok": True, ...} or {"ok": False, "error"}."""
+    name = lifecycle._windows_service_name(manifest)
+    if not name:
+        return {"ok": False, "error": "manifest missing windows_service"}
+    state, pid = lifecycle._sc_query(name)
+    if state != "RUNNING":
+        return {"ok": False, "error": f"{name} is not RUNNING (state {state})"}
+    if not pid or pid != os.getppid():
+        return {"ok": False, "error": f"this process is not {name}'s program (service pid {pid}, "
+                                      f"parent pid {os.getppid()}): exiting would restart nothing"}
+    policy = nssm_exit_policy(name)
+    if policy.get("error"):
+        return {"ok": False, "error": policy["error"]}
+    if policy["policy"].lower() != NSSM_DEFAULT_EXIT.lower():
+        return {"ok": False, "error": f"{name}'s exit policy is {policy['policy']}, not Restart "
+                                      f"({policy['source']}): NSSM would not start it again"}
+    return {"ok": True, "service": name, "service_pid": pid, "exit_policy": policy}
+
+
+def _exit_process() -> None:
+    """The last thing a Windows self-upgrade does. A seam, so a test can watch
+    it happen without it happening."""
+    log.info("leaving so NSSM starts the new version")
+    os._exit(0)
+
+
+EXIT_GRACE_S = 0.5
 
 
 # ── running things (one seam, so tests replace it) ───────────────────────────
@@ -520,10 +590,10 @@ class Upgrader:
             return 409, {"ok": False, "service": name, "upgradable": False,
                          "error": "no install record for this service: not a pip install this Observatory can see"}
         self_up = is_self(inst)
-        if self_up and (os.name == "nt" or manifests.service_type(manifest) != "systemd"):
+        if self_up and manifests.service_type(manifest) not in SELF_RESTART_TYPES:
             return 409, {"ok": False, "service": name, "error":
-                         "the Observatory can upgrade itself only as a systemd unit; "
-                         "upgrade it with its Starwright card"}
+                         "the Observatory can upgrade itself only as a systemd unit or a Windows "
+                         "service (something must start it again); upgrade it with its Starwright card"}
         job = UpgradeJob(id=time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6], service=name,
                          package=inst.package, version=version, with_=list(with_), reason=reason[:200],
                          self_upgrade=self_up, peers=peers)
@@ -621,7 +691,21 @@ class Upgrader:
             return
         job.note("preflight", True)
 
-        # 6. restart. Itself: hand the restart to systemd and stop here.
+        # 6. restart. Itself: hand the restart to what started it and stop here.
+        if job.self_upgrade and manifests.service_type(manifest) == "windows_service":
+            check = await asyncio.to_thread(nssm_handoff_check, manifest)
+            if not check["ok"]:
+                job.note("restart", False, error=check["error"])
+                await self._roll_back(job, inst, manifest, restart=False,
+                                      reason="NSSM would not restart the Observatory: " + check["error"])
+                return
+            job.state = "restarting"
+            job.note("restart", True, handed_to="nssm", **{k: check[k] for k in ("service", "exit_policy")})
+            save(job)
+            # The job is on disk; give the response and the log their moment,
+            # then leave. NSSM starts the new version, which closes the job.
+            asyncio.get_running_loop().call_later(EXIT_GRACE_S, _exit_process)
+            return
         if job.self_upgrade:
             job.state = "restarting"
             job.note("restart", True, handed_to="systemd")

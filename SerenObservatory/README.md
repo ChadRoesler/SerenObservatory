@@ -130,9 +130,12 @@ anything changed it. Anything failing is rolled back: old versions, old config,
 restarted. Where the service came from is read from the Starwright install
 ledger (`~/.seren/installed`), so the GPU daemons the node installer builds are
 "not upgradable" here, and the answer says so. `"dry_run": true` returns pip's
-own plan. The Observatory can upgrade itself on systemd (the restart is handed
-to systemd, and the Observatory that comes back closes the job); on Windows use
-its Starwright card. Lodestar drives this across the cluster
+own plan. The Observatory can upgrade itself when something will start it
+again: on systemd the restart is handed to systemd; on Windows it checks that
+NSSM is minding it with a Restart exit policy and exits, and NSSM starts the
+new version. Either way the Observatory that comes back closes the job. Run
+any other way (a pid file, a launcher) it refuses and says to use its
+Starwright card. Lodestar drives this across the cluster
 (`POST /api/v1/upgrade` there), with a copy pulled off the box first.
 Before anything is touched, the apps the new version talks to are checked:
 a reader lists them in its pyproject as a `peers` extra nobody installs

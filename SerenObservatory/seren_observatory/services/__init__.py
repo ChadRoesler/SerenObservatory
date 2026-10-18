@@ -25,7 +25,7 @@ from fastapi import APIRouter
 # Import each service's handler module here. They're optional - if a module
 # is missing or fails to import, that service gets generic lifecycle
 # endpoints only (start/stop/health/etc) without specifics.
-from . import comfy, coral, kokoro, llama, whisper
+from . import comfy, coral, kokoro, listener, llama, whisper
 
 # Map of service name → register(router) function
 #
@@ -39,6 +39,7 @@ HANDLERS: dict[str, Callable[[APIRouter], None]] = {
     "comfy":   comfy.register,
     "coral":   coral.register,
     "kokoro":  kokoro.register,
+    "listener": listener.register,
     "llama":   llama.register,
     "whisper": whisper.register,
 }

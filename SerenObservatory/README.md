@@ -121,6 +121,17 @@ too) reports `idle` instead of `not_running`: `/system/health` lists it under
 badge rather than a red one. Flip it by hand with
 `POST /service/<name>/orchestrated {"orchestrated": true|false}`.
 
+**The senses on a node.** Beyond start/stop/health, three services have
+routes of their own that Lodestar talks through: whisper
+(`POST /service/whisper/transcribe`, a clip in, words out), the listener
+(`POST /service/listener/listen` and `/compare`, a clip and a question in,
+words about the sound out: an audio-language model on a node with the memory
+for it) and the speaker (`POST /service/speaker/speak` with `{text, voice}`,
+a WAV out in the voice the node has; `GET /service/speaker/voices` lists
+them). Each goes to the service on the box at its manifest's port, and each
+answers with a status when it cannot: 503 while it loads or when it is down,
+502 when it refused what it was sent.
+
 **Upgrades.** `POST /service/<name>/upgrade {"version": "5.0.2"}` upgrades a
 pip-installed service as a job (`GET /upgrades/<id>` follows it): the
 service's own snapshot, its config and `.env` files held, `pip install

@@ -227,18 +227,91 @@ def nssm_exit_policy(service: str) -> dict[str, Any]:
         return {"error": f"could not read the service's AppExit: {e}"}
 
 
+def _windows_process(pid: int) -> Optional[dict[str, Any]]:
+    """{"parent": its parent's pid, "image": the full path of its program} for
+    a running Windows process, read from kernel32 through ctypes (no psutil:
+    the base install stays pyyaml-only). None off Windows or when the process
+    is gone. A seam, so a test can draw the process tree."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class Entry(ctypes.Structure):      # PROCESSENTRY32W
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                               ctypes.POINTER(wintypes.DWORD)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)       # TH32CS_SNAPPROCESS
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return None
+    parent = None
+    try:
+        e = Entry()
+        e.dwSize = ctypes.sizeof(Entry)
+        ok = k32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            if e.th32ProcessID == pid:
+                parent = int(e.th32ParentProcessID)
+                break
+            ok = k32.Process32NextW(snap, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(snap)
+    if parent is None:
+        return None
+    image = ""
+    handle = k32.OpenProcess(0x1000, False, pid)      # PROCESS_QUERY_LIMITED_INFORMATION
+    if handle:
+        try:
+            buf = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(buf))
+            if k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                image = buf.value
+        finally:
+            k32.CloseHandle(handle)
+    return {"parent": parent, "image": image}
+
+
+def _minded_through_launcher(service_pid: int) -> bool:
+    """A Windows venv's python.exe is a launcher, not Python: it starts the
+    base interpreter as its child, waits, and exits with the child's code.
+    Under NSSM the tree is nssm.exe -> <venv>\\Scripts\\python.exe ->
+    <home>\\python.exe, so this process's parent is the launcher and the
+    service is one further up. Exiting still ends the launcher, and NSSM
+    starts it again. Found 19 Oct 2026: the desktop's Observatory refused
+    every self-upgrade this way. True only when the parent's program is this
+    venv's own python.exe (sys.executable) and the launcher's parent is the
+    service."""
+    parent = _windows_process(os.getppid())
+    return bool(parent and parent["parent"] == service_pid and _same(parent["image"], sys.executable))
+
+
 def nssm_handoff_check(manifest: dict[str, Any]) -> dict[str, Any]:
     """Can this process hand its restart to NSSM by exiting? Yes when the
     manifest names a Windows service, that service is RUNNING, its process
-    is this process's parent (so this IS the program NSSM is minding), and
-    NSSM's exit policy is Restart. {"ok": True, ...} or {"ok": False, "error"}."""
+    is this process's parent, or the parent of this venv's own launcher (so
+    this IS the program NSSM is minding), and NSSM's exit policy is Restart.
+    {"ok": True, ...} or {"ok": False, "error"}."""
     name = lifecycle._windows_service_name(manifest)
     if not name:
         return {"ok": False, "error": "manifest missing windows_service"}
     state, pid = lifecycle._sc_query(name)
     if state != "RUNNING":
         return {"ok": False, "error": f"{name} is not RUNNING (state {state})"}
-    if not pid or pid != os.getppid():
+    if not pid or (pid != os.getppid() and not _minded_through_launcher(pid)):
         return {"ok": False, "error": f"this process is not {name}'s program (service pid {pid}, "
                                       f"parent pid {os.getppid()}): exiting would restart nothing"}
     policy = nssm_exit_policy(name)
@@ -543,7 +616,12 @@ class Upgrader:
         if r["ok"]:
             out = r.get("out") or ""
             try:
-                rep = json.loads(out[out.index("{"):])
+                # The report is stdout, and _run puts stderr after it. A pip
+                # warning there ("does not provide the extra 'mcp'") failed the
+                # whole parse, so the plan said nothing would install and judged
+                # the peers on the old version (found 19 Oct 2026, the nuc's
+                # Workbench): read the report and stop where it ends.
+                rep, _ = json.JSONDecoder().raw_decode(out, out.index("{"))
                 for x in rep.get("install") or []:
                     md = x.get("metadata") or {}
                     would.append({"name": md["name"], "version": md["version"]})

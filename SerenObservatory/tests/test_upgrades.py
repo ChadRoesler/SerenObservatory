@@ -16,8 +16,10 @@ the ledger lookup, the job file, the config copies, the put-back. Pinned here:
 - a service that keeps stores and will not snapshot is not upgraded
 - the Observatory upgrading itself hands the restart to what started it and
   the next Observatory closes the job: systemd on Linux; on Windows it proves
-  NSSM is minding it with a Restart policy and exits, else rolls back; as a
+  NSSM is minding it with a Restart policy and exits, else rolls back (NSSM
+  may mind it through the venv's own python.exe launcher, one level up); as a
   pid file or a launcher it refuses, nothing would start it again
+- a pip warning after the dry run's report does not blank the plan
 - requests are checked before anything reaches pip; POST needs the token
 - peers: a version that needs a newer Memory or Loci than the cluster runs is
   held before anything is touched (pip's dry run says what it needs); the
@@ -52,6 +54,7 @@ class FakeBox:
         self.pip_calls: list[list[str]] = []
         self.restarts = 0
         self.pip_fails = False
+        self.pip_warning = None                       # what pip says on stderr, after the report
         self.import_fails = False
         self.healthy_after_upgrade = True
         self.on_restart = None
@@ -75,7 +78,8 @@ class FakeBox:
                 if self.new_requires is not None:
                     rep["install"].append({"metadata": {"name": "seren-memory", "version": "5.1.0",
                                                         "requires_dist": self.new_requires}})
-                return {"ok": True, "exit_code": 0, "out": json.dumps(rep)}
+                return {"ok": True, "exit_code": 0,
+                        "out": json.dumps(rep) + ("\n" + self.pip_warning if self.pip_warning else "")}
             if self.pip_fails and "--upgrade" in argv:
                 return {"ok": False, "exit_code": 1, "out": "ERROR: ResolutionImpossible"}
             for s in specs:
@@ -268,6 +272,19 @@ async def test_dry_run_is_pips_plan_and_changes_nothing(box):
     assert "--dry-run" in box.pip_calls[0]
 
 
+async def test_a_pip_warning_after_the_report_does_not_blank_the_plan(box):
+    """pip's warnings go to stderr, which comes after the report. One used to
+    fail the parse: the plan said nothing would install (19 Oct 2026, the
+    nuc's Workbench, recorded with an [mcp] extra its release does not have)."""
+    box.pip_warning = "WARNING: seren-memory 5.1.0 does not provide the extra 'st'"
+    box.new_requires = ["seren-sinew>=5.0"]
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        p = (await c.post("/api/v1/service/seren-memory-wren/upgrade",
+                          json={"dry_run": True}, headers=OBS)).json()
+    assert p["ok"] and {"name": "seren-memory", "version": "5.1.0"} in p["would_install"]
+
+
 async def test_what_pip_was_not_used_for_is_not_upgradable(box):
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -337,10 +354,13 @@ def _itself_as(box, fake_home, monkeypatch, service_type, **more):
     m.write_text(json.dumps(manifest))
 
 
-def _nssm(monkeypatch, policy="Restart", ppid=None, state="RUNNING"):
-    """What sc.exe and the registry would say, and the exit as a record."""
+def _nssm(monkeypatch, policy="Restart", ppid=None, state="RUNNING", launcher=None):
+    """What sc.exe and the registry would say, and the exit as a record.
+    launcher: what this process's parent is ({"parent", "image"}); None, not
+    a venv launcher at all."""
     pid = os.getppid() if ppid is None else ppid
     monkeypatch.setattr(lifecycle, "_sc_query", lambda name: (state, pid))
+    monkeypatch.setattr(upgrades, "_windows_process", lambda p: launcher if p == os.getppid() else None)
     monkeypatch.setattr(upgrades, "nssm_exit_policy", lambda name: {"policy": policy, "source": "registry"})
     left = []
     monkeypatch.setattr(upgrades, "_exit_process", lambda: left.append(True))
@@ -400,6 +420,16 @@ def test_the_handoff_check_on_its_own(monkeypatch):
     _nssm(monkeypatch, ppid=os.getppid() + 100000)
     out = upgrades.nssm_handoff_check(m)
     assert not out["ok"] and "not SerenObservatory-wren's program" in out["error"]
+    # a Windows venv: nssm.exe -> <venv>\Scripts\python.exe (a launcher) -> this
+    # process. The service is the launcher's parent, and leaving still restarts it
+    service = os.getppid() + 100000
+    _nssm(monkeypatch, ppid=service, launcher={"parent": service, "image": sys.executable})
+    assert upgrades.nssm_handoff_check(m)["ok"]
+    # only this venv's own launcher, and only under the service
+    _nssm(monkeypatch, ppid=service, launcher={"parent": service, "image": "C:/someone/else/python.exe"})
+    assert not upgrades.nssm_handoff_check(m)["ok"]
+    _nssm(monkeypatch, ppid=service, launcher={"parent": service + 4, "image": sys.executable})
+    assert not upgrades.nssm_handoff_check(m)["ok"]
     _nssm(monkeypatch, state="STOPPED")
     assert "not RUNNING" in upgrades.nssm_handoff_check(m)["error"]
     assert upgrades.nssm_handoff_check({"service": "x", "service_type": "windows_service"})["error"] \
@@ -411,6 +441,15 @@ def test_the_handoff_check_on_its_own(monkeypatch):
         assert pol == {"policy": "Restart", "source": "nssm default (no AppExit key)"}
     else:
         assert "not Windows" in pol["error"]
+
+
+def test_the_process_tree_is_read_for_real_on_windows_and_not_at_all_off_it():
+    me = upgrades._windows_process(os.getpid())
+    if os.name != "nt":
+        assert me is None
+        return
+    assert me["parent"] == os.getppid() and Path(me["image"]).name.lower().startswith("python")
+    assert upgrades._windows_process(0x7FFFFFFC) is None, "a pid nobody has"
 
 
 async def test_run_from_a_pid_file_the_observatory_still_refuses_to_upgrade_itself(box, fake_home, monkeypatch):

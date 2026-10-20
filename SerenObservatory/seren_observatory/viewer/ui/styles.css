@@ -128,18 +128,30 @@ a { text-decoration: none; }
 .hint.warn { color: var(--warn); }
 
 /* -- service table ------------------------------------------------------- */
+/* One grid for the head and every row: the dot, the name, then the value
+   columns (type, on demand, health, mem, cpu, uptime) and the actions.
+   Values are centred under their headings (Chad, 20 Oct 2026: "center
+   values for columns"); the name stays left, the actions right. */
+/* The actions column is a fixed width in BOTH the head and the rows: as
+   `auto` it was the width of its content, four buttons in a row and one
+   word in the head, so every fr column landed somewhere else in the head
+   than in the rows and the headings sat off their values (Chad, 20 Oct
+   2026, with a screenshot). */
 .svc-head, .svc-row {
     display: grid;
-    grid-template-columns: 18px 1.4fr .9fr .7fr .7fr .7fr .8fr auto;
+    grid-template-columns: 18px 1.4fr .9fr .8fr .8fr .7fr .6fr .8fr 156px;
     gap: 10px;
     align-items: center;
     padding: 9px 12px;
 }
+    .svc-row { padding: 8px 11px; }    /* its 1px border keeps the columns on the head's grid */
+    .svc-head > span:not(:nth-child(2)):not(:last-child),
+    .svc-row .col { text-align: center; }
+    .svc-row .col-na { color: var(--faint); }
 
 .svc-head {
     color: var(--faint);
-    font-size: 10px;
-    font-family: var(--mono);
+    font-size: 11px;              /* the family's table heading: the page face, small caps */
     text-transform: uppercase;
     letter-spacing: .5px;
     border-bottom: 1px solid var(--line);
@@ -180,7 +192,7 @@ a { text-decoration: none; }
     .health-chip.up { color: var(--ok); border-color: var(--ok); }
     .health-chip.idle { color: #a6adc8; border-color: #45475a; }
 .dot.idle { background: #585b70; box-shadow: none; }
-.badge.orch { color: #89b4fa; border-color: #45475a; margin-left: 4px; }
+.badge.orch { color: #89b4fa; border-color: #45475a; }
 .health-chip.down { color: var(--danger); border-color: var(--danger); }
     .health-chip.na { color: var(--faint); }
 
@@ -228,3 +240,6 @@ a { text-decoration: none; }
     font-size: 13px;
 }
 .err b { color: var(--text); }
+
+/* the header health pill: red when something that should be up is not */
+.head-pill.bad { color: var(--danger); border-color: var(--danger); }

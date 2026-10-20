@@ -165,6 +165,50 @@ def load_node() -> dict[str, Any] | None:
     return data
 
 
+def discover_node() -> dict[str, Any]:
+    """What the box can say about itself without a node.json: hostname, its
+    non-loopback addresses, platform, cores. Chad, 20 Oct 2026: "noticed
+    lodestar isnt reporting ips?" - no node on the constellation has ever
+    had a ~/.seren/node.json (nothing writes one), so every card said "-"
+    for host and ip. The file still wins when it exists; this is the floor.
+    `source: discovered` says which it was."""
+    import platform as _platform
+    import socket
+    import subprocess
+    hostname = socket.gethostname()
+    ips: list[str] = []
+    try:
+        if os.name != "nt":
+            r = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=3)
+            ips = [a for a in (r.stdout or "").split() if a and ":" not in a]
+    except (OSError, subprocess.SubprocessError):
+        ips = []
+    if not ips:
+        try:
+            # The address the box would talk to the LAN from. No packet is sent.
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(("10.255.255.255", 1))
+                ips = [s.getsockname()[0]]
+            finally:
+                s.close()
+        except OSError:
+            ips = []
+    if not ips:
+        try:
+            ips = [a for a in socket.gethostbyname_ex(hostname)[2] if not a.startswith("127.")]
+        except OSError:
+            ips = []
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "hostname": hostname,
+        "ip_addresses": ips,
+        "platform": _platform.platform(),
+        "cpu_cores": os.cpu_count(),
+        "source": "discovered",
+    }
+
+
 def _same_dir(a: Path, b: Path) -> bool:
     # realpath + normcase: a trailing slash, a symlink or (on Windows) a
     # different case must not make one directory read - and listed - twice.
@@ -290,6 +334,35 @@ def service_has_lifecycle(manifest: dict[str, Any]) -> bool:
 def is_orchestrated(manifest: dict[str, Any]) -> bool:
     v = manifest.get("orchestrated")
     return v is True or (isinstance(v, str) and v.strip().lower() in ("1", "true", "yes", "on"))
+
+
+# ── parent / children: what a service owns ───────────────────────────────────
+# Chad, 20 Oct 2026: "probe should own its sub processes (the docker containers
+# whatever) ... same with workbench, since it can own sub processes of its own
+# (searxng whatever, this way we dont lie about whats there and what it has)".
+# Two optional manifest keys say so; Lodestar's card folds the family under
+# the owner with a chevron, and the owner's row carries the family's memory.
+#
+#   parent:   the name of the service this one belongs to, when it has a
+#             manifest of its own (searxng under seren-workbench-wren). The
+#             installer writes it; nothing here infers it.
+#   children: how to find what an owner starts itself, which has no manifest
+#             of its own. One kind so far:
+#               {"docker_project": "seren-probe-*"}
+#             every container whose com.docker.compose.project label matches
+#             (fnmatch), read from the same `docker ps` the compose services
+#             already share (lifecycle.docker_children).
+#
+# Both ride on the status answer (lifecycle.status) so a poll sees them.
+
+def parent_of(manifest: dict[str, Any]) -> str | None:
+    v = manifest.get("parent")
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def children_spec(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    v = manifest.get("children")
+    return v if isinstance(v, dict) and v else None
 
 
 def manifest_path(name: str) -> Path | None:

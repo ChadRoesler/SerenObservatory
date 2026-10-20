@@ -324,10 +324,38 @@ def nssm_handoff_check(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _exit_process() -> None:
-    """The last thing a Windows self-upgrade does. A seam, so a test can watch
-    it happen without it happening."""
+    """The last thing a Windows self-upgrade or self-restart does. A seam, so
+    a test can watch it happen without it happening."""
     log.info("leaving so NSSM starts the new version")
     os._exit(0)
+
+
+async def restart_self_via_nssm(manifest: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """POST /service/<itself>/restart on Windows. None when the manifest is
+    not this process's own service (the caller restarts it the ordinary way).
+
+    The ordinary way, for itself, was `sc stop` then `sc start` run INSIDE the
+    request: the stop killed this process mid-answer, the client saw WinError
+    10054 and no start ever ran (Chad, 20 Oct 2026: "observatory cannot
+    restart itself, though nssm it seems to throw a stop then start"). The
+    self-upgrade already knew the answer: answer first, then leave, and let
+    NSSM start it again. Same hand-off here, same checks (this IS the
+    program NSSM is minding, and its exit policy is Restart). When those
+    checks fail for a manifest that names an Observatory, the answer says
+    why and nothing is killed; a non-Observatory Windows service is None,
+    the sc path."""
+    if manifests.service_type(manifest) != "windows_service":
+        return None
+    from .system_routes import _is_an_observatory
+    check = await asyncio.to_thread(nssm_handoff_check, manifest)
+    if check["ok"]:
+        log.info("restart of %s is my own: handing it to NSSM", manifest.get("service"))
+        asyncio.get_running_loop().call_later(EXIT_GRACE_S, _exit_process)
+        return {"ok": True, "handed_to": "nssm", "service": check["service"], "exit_policy": check["exit_policy"],
+                "note": f"answering first, leaving in {EXIT_GRACE_S:g}s; NSSM starts the Observatory again"}
+    if _is_an_observatory(manifest):
+        return {"ok": False, "handed_to": None, "error": "this Observatory cannot hand its restart to NSSM: " + check["error"]}
+    return None
 
 
 EXIT_GRACE_S = 0.5

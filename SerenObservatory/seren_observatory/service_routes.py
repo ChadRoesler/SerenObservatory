@@ -84,7 +84,14 @@ async def post_stop(name: str):
 
 @router.post("/{name}/restart")
 async def post_restart(name: str):
-    return await lifecycle.restart(_installed(name))
+    m = _installed(name)
+    # Itself, on Windows: answer, then leave, and NSSM starts it again. An sc
+    # stop from inside the request killed the answer (20 Oct 2026).
+    from .upgrades import restart_self_via_nssm
+    handed = await restart_self_via_nssm(m)
+    if handed is not None:
+        return handed
+    return await lifecycle.restart(m)
 
 
 @router.get("/{name}/health")

@@ -1109,6 +1109,7 @@ _docker_cache: dict[str, Any] = {
     "stats_at": 0.0,
     "stats": {},         # {container_id_short: {memory_mb, cpu_percent}}
     "lock": None,        # asyncio.Lock created lazily (event-loop-bound)
+    "refreshing": False, # a background refresh is in flight (serve the old snapshot meanwhile)
 }
 
 
@@ -1189,8 +1190,61 @@ def _docker_ps_all() -> dict[str, dict[str, Any]]:
             "Status": obj.get("Status"),  # e.g. "Up 2 hours"
             "Image": obj.get("Image"),
             "CreatedAt": obj.get("CreatedAt"),
+            # "k=v,k=v": compose stamps com.docker.compose.project on every
+            # container it starts, which is how an owner finds its children.
+            "Labels": _parse_labels(obj.get("Labels")),
         }
     return states
+
+
+def _parse_labels(raw: Any) -> dict[str, str]:
+    if isinstance(raw, dict):
+        return {str(k): str(v) for k, v in raw.items()}
+    out: dict[str, str] = {}
+    for part in str(raw or "").split(","):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def docker_children(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """The containers an owner started, from the cached docker snapshot: every
+    container whose compose project label matches spec["docker_project"]
+    (fnmatch, so "seren-probe-*" takes every pod Probe spins up). One row
+    each, in the shape Lodestar's card shows: name, running, memory, cpu.
+    Reads the cache only; the caller refreshes it (children_of)."""
+    pattern = spec.get("docker_project")
+    if not isinstance(pattern, str) or not pattern.strip():
+        return []
+    from fnmatch import fnmatchcase
+    out: list[dict[str, Any]] = []
+    for name, state in sorted((_docker_cache.get("states") or {}).items()):
+        project = (state.get("Labels") or {}).get("com.docker.compose.project", "")
+        if not fnmatchcase(project, pattern.strip()):
+            continue
+        running = state.get("State") == "running"
+        stats = _docker_stats(state.get("ID")) if running else None
+        out.append({
+            "name": name,
+            "kind": "container",
+            "running": running,
+            "state": state.get("State"),
+            "status": state.get("Status"),
+            "image": state.get("Image"),
+            "project": project,
+            "memory_mb": stats["memory_mb"] if stats else None,
+            "cpu_percent": stats["cpu_percent"] if stats else None,
+        })
+    return out
+
+
+async def children_of(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """What a manifest's `children` names, as it stands now."""
+    if spec.get("docker_project"):
+        await _docker_refresh_cache_if_stale()
+        return docker_children(spec)
+    return []
 
 
 def _parse_docker_size_to_mb(s: str) -> int | None:
@@ -1257,12 +1311,22 @@ def _docker_stats_all() -> dict[str, dict[str, Any]]:
 
 
 async def _docker_refresh_cache_if_stale() -> None:
-    """Refresh the module-level docker cache if older than TTL.
+    """Keep the module-level docker cache fresh WITHOUT making a status answer
+    wait for docker.
 
-    Uses an asyncio.Lock so concurrent status calls don't all race to
-    refresh - first caller refreshes, others wait briefly and then read
-    the freshened cache. The blocking subprocess work happens in a
-    worker thread so the event loop stays responsive.
+    `docker stats --no-stream` is ~1.5s. Until 20 Oct 2026 a stale cache was
+    refreshed inline, so the first status call after the TTL carried that
+    1.5s - and Lodestar's discovery, which gives a node 2s, timed out on the
+    nuc the moment Probe's pods became its children (manifests `children`,
+    read from this same cache). The node read offline for being honest about
+    what it owns.
+
+    Now: a COLD cache (nothing fetched yet) is filled inline once, because
+    there is nothing to serve instead. A STALE cache is served as it is and
+    a background task freshens it; the next call reads the new snapshot. At
+    worst an answer is one TTL old, never slow. One refresh in flight at a
+    time (the `refreshing` flag), so a burst of polls cannot pile up docker
+    shellouts.
     """
     import asyncio as _asyncio
 
@@ -1275,6 +1339,33 @@ async def _docker_refresh_cache_if_stale() -> None:
     if states_age < _DOCKER_CACHE_TTL_S and stats_age < _DOCKER_CACHE_TTL_S:
         return  # cache fresh enough, nothing to do
 
+    cold = _docker_cache["states_at"] == 0.0
+    if cold:
+        await _docker_refresh_cache_now()
+        return
+    if _docker_cache.get("refreshing"):
+        return                      # one in flight already; serve what we have
+    _docker_cache["refreshing"] = True
+
+    async def _in_background() -> None:
+        try:
+            await _docker_refresh_cache_now()
+        except Exception:           # a failed refresh leaves the old snapshot, never a crash
+            pass
+        finally:
+            _docker_cache["refreshing"] = False
+
+    _asyncio.get_running_loop().create_task(_in_background())
+
+
+async def _docker_refresh_cache_now() -> None:
+    """The refresh itself, under the lock so concurrent callers share one.
+    The blocking subprocess work runs in a worker thread so the event loop
+    stays responsive."""
+    import asyncio as _asyncio
+
+    if _docker_cache["lock"] is None:
+        _docker_cache["lock"] = _asyncio.Lock()
     async with _docker_cache["lock"]:
         # Re-check inside the lock - another coroutine may have refreshed
         # while we were waiting.
@@ -1665,6 +1756,19 @@ async def status(manifest: dict[str, Any]) -> dict[str, Any]:
     st["orchestrated"] = manifests.is_orchestrated(manifest)
     if st["orchestrated"] and not st.get("running"):
         st["idle"] = True
+    # What it belongs to, and what it owns (manifests: parent / children).
+    # Lodestar folds the family under the owner so the card does not lie
+    # about what is there (Chad, 20 Oct 2026).
+    parent = manifests.parent_of(manifest)
+    if parent:
+        st["parent"] = parent
+    spec = manifests.children_spec(manifest)
+    if spec:
+        try:
+            st["children"] = await children_of(spec)
+        except Exception as e:                       # a poll must never fall over its children
+            st["children"] = []
+            st["children_error"] = str(e)
     return st
 
 
@@ -1706,12 +1810,39 @@ def _tail_log_sync(manifest: dict[str, Any], lines: int = 100) -> dict[str, Any]
         return _docker_tail_log(manifest, lines)
 
     log_path = manifest.get("log_path")
+    # A systemd unit logs to journald unless its manifest says otherwise: the
+    # seren-* units on the nuc have no log_path and no ~/seren-logs file, so
+    # every service's logs read as "does not exist yet" (Chad, 20 Oct 2026:
+    # "no logs for any of the seren services are appearing"). journalctl
+    # needs no sudo for a user in adm or systemd-journal (caesar is in adm).
+    if stype == "systemd" and not log_path:
+        return _journal_tail(manifest, lines)
     if not log_path:
         name = manifest.get("service")
         if name:
             log_path = f"{Path.home()}/seren-logs/{name}.log"
 
     return _tail_file(log_path, lines)
+
+
+def _journal_tail(manifest: dict[str, Any], lines: int) -> dict[str, Any]:
+    """The last N journal lines of a systemd unit, in the file tail's shape:
+    {ok, lines, log_path: "journalctl -u <unit>"} or {ok, error, note}."""
+    unit = manifest.get("systemd_unit") or f"{manifest.get('service')}.service"
+    argv = ["journalctl", "-u", str(unit), "-n", str(max(1, min(lines, 10_000))), "--no-pager", "-o", "short-iso"]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8.0)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "journalctl timed out after 8s"}
+    except OSError as e:
+        return {"ok": False, "error": f"journalctl could not run: {e}"}
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout or "").strip()
+        note = ("this account may not read the journal: it needs to be in the adm or systemd-journal group"
+                if "permission" in err.lower() or "access" in err.lower() else None)
+        return {"ok": False, "error": err or f"journalctl exited {r.returncode}", **({"note": note} if note else {})}
+    out = [l for l in r.stdout.splitlines() if not l.startswith("-- ")]   # journald's own "-- Logs begin" banner
+    return {"ok": True, "lines": out, "log_path": f"journalctl -u {unit}"}
 
 
 async def probe_port(manifest: dict[str, Any]) -> dict[str, Any]:

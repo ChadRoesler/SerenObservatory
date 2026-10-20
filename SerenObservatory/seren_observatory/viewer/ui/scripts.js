@@ -44,20 +44,17 @@ function statTemp(c) { return c == null ? '' : (c >= 80 ? 'hot' : (c >= 65 ? 'wa
 function statMem(p) { return p == null ? '' : (p >= 90 ? 'hot' : (p >= 75 ? 'warn' : 'ok')); }
 
 // -- header pills --------------------------------------------------------
-function renderNodePill(node) {
-    const host = (node && node.manifest && (node.manifest.hostname || node.manifest.host)) || 'node';
-    const pill = $('node-pill');
-    pill.textContent = host;
-    pill.style.display = '';
-}
 function renderHealthPill(health) {
     const pill = $('health-pill');
-    if (!health) { pill.textContent = '-'; pill.classList.remove('hot'); return; }
+    if (!health) { pill.textContent = 'health: -'; pill.className = 'head-pill'; return; }
     const ok = !!health.ok;
     const idle = (health.idle || []).length;
-    pill.textContent = `${ok ? 'healthy' : 'degraded'} ${health.healthy}/${health.total}${idle ? ` · ${idle} idle` : ''}`;
+    pill.textContent = `health: ${ok ? '' : 'degraded '}${health.healthy}/${health.total}${idle ? ` · ${idle} idle` : ''}`;
     pill.title = idle ? `${idle} orchestrated service(s) off until asked for: ${(health.idle || []).join(', ')}` : 'local service health';
-    pill.classList.toggle('hot', !ok);   // .head-pill.hot is the shell's alert variant
+    // The accent while everything that should be up is up; bright red when
+    // it is not (Chad, 20 Oct 2026, third pass: "head pill should be in
+    // accent color").
+    pill.className = 'head-pill ' + (ok ? 'hot' : 'bad');
     pill.style.display = '';
 }
 
@@ -89,12 +86,17 @@ function renderNodeMeta(node) {
     const rt = (node && node.runtime) || {};
     const box = $('node-meta');
     if (!m) { box.innerHTML = `<div class="hint">no ~/.seren/node.json on this node</div>`; return; }
-    const named = ['hostname', 'host', 'role', 'model', 'board', 'ip'];
+    // ip_addresses is a list and was skipped with the other objects, so the
+    // panel never said the one thing you look here for (20 Oct 2026). A list
+    // of scalars reads as one line.
+    const scalar = (v) => v != null && (typeof v !== 'object' || (Array.isArray(v) && v.every(x => typeof x !== 'object')));
+    const show = (v) => Array.isArray(v) ? (v.length ? v.join(', ') : '-') : v;
+    const named = ['hostname', 'host', 'ip_addresses', 'ip', 'role', 'model', 'board', 'platform'];
     const rows = [];
-    for (const k of named) if (m[k] != null && typeof m[k] !== 'object') rows.push([k, m[k]]);
+    for (const k of named) if (scalar(m[k])) rows.push([k, show(m[k])]);
     for (const [k, v] of Object.entries(m)) {
         if (named.includes(k)) continue;
-        if (v != null && typeof v !== 'object') rows.push([k, v]);
+        if (scalar(v)) rows.push([k, show(v)]);
     }
     if (rt.memory_mb_total) rows.push(['memory', `${rt.memory_mb_available} / ${rt.memory_mb_total} MB free`]);
     box.innerHTML = rows.map(([k, v]) =>
@@ -137,7 +139,10 @@ function svcRow(name, entry) {
     else if (idle) healthChip = `<span class="health-chip idle" title="orchestrated: started on demand, off until asked for">idle</span>`;
     else if (ph && ph.ok) healthChip = `<span class="health-chip up">up${ph.latency_ms != null ? ' ' + ph.latency_ms + 'ms' : ''}</span>`;
     else if (running && ph && !ph.ok) healthChip = `<span class="health-chip down">down</span>`;
-    const orchBadge = orch ? ` <span class="badge orch" title="orchestrated: Lodestar starts and stops it">on demand</span>` : '';
+    // "On demand" is its own column (Chad, 20 Oct 2026): a chip there, and
+    // nothing riding on the type badge any more.
+    const orchCell = orch ? `<span class="badge orch" title="orchestrated: Lodestar starts it when someone needs it and stops it when nobody does">on demand</span>`
+                          : `<span class="col-na">-</span>`;
 
     const dotCls = lib ? 'stop' : (running ? (ph && !ph.ok ? 'bad' : 'run') : (idle ? 'idle' : 'stop'));
     const typeCls = stype === 'library' ? 'lib' : (stype === 'systemd' ? 'systemd' : (stype === 'docker_compose' ? 'docker' : 'pid'));
@@ -150,7 +155,8 @@ function svcRow(name, entry) {
     return `<div class="svc-row">
         <span class="dot ${dotCls}" title="${running ? 'running' : (idle ? 'idle (orchestrated)' : 'stopped')}"></span>
         <span class="nm">${escapeHtml(name)}</span>
-        <span class="col"><span class="badge ${typeCls}">${escapeHtml(stype)}</span>${orchBadge}</span>
+        <span class="col"><span class="badge ${typeCls}">${escapeHtml(stype)}</span></span>
+        <span class="col">${orchCell}</span>
         <span class="col">${healthChip}</span>
         <span class="col">${st.memory_mb != null ? st.memory_mb + ' MB' : '-'}</span>
         <span class="col">${st.cpu_percent != null ? st.cpu_percent + '%' : '-'}</span>
@@ -164,7 +170,7 @@ function renderServices(data) {
     const names = Object.keys(services).sort();
     if (!names.length) { $('svc-table').innerHTML = `<div class="empty">no services installed on this node</div>`; return; }
     const head = `<div class="svc-head">
-        <span></span><span>service</span><span>type</span><span>health</span>
+        <span></span><span>service</span><span>type</span><span>on demand</span><span>health</span>
         <span>mem</span><span>cpu</span><span>uptime</span><span style="text-align:right;">actions</span>
     </div>`;
     $('svc-table').innerHTML = head + names.map(n => svcRow(n, services[n])).join('');
@@ -235,7 +241,6 @@ async function boot() {
     const thermalV = thermal.status === 'fulfilled' ? thermal.value : null;
     const healthV = health.status === 'fulfilled' ? health.value : null;
 
-    renderNodePill(nodeV);
     renderHealthPill(healthV);
     renderVitals(nodeV, thermalV, healthV);
     renderNodeMeta(nodeV);

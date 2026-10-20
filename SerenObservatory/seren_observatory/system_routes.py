@@ -52,7 +52,9 @@ async def node_info() -> dict[str, Any]:
 
     For the dashboard's "what is this box?" panel.
     """
-    n = manifests.load_node()
+    # The file when there is one, else what the box says about itself: the
+    # cards used to show "-" for host and ip on every node (20 Oct 2026).
+    n = manifests.load_node() or manifests.discover_node()
 
     # Runtime stats - cheap to compute
     runtime: dict[str, Any] = {}
@@ -282,7 +284,13 @@ def _is_an_observatory(m: dict) -> bool:
     its own, and reclaim from one must not stop another mid-loop either."""
     unit = (m.get("systemd_unit") or "").removesuffix(".service")
     win = m.get("windows_service") or ""
-    return any(x == "seren-observatory" or x.startswith("seren-observatory-") for x in (unit, win))
+    # Case-blind, and both spellings: the Windows card names the service
+    # SerenObservatory-wren, which the dashed, lowercase test did not match
+    # (found 20 Oct 2026 when a self-restart on the desktop went through sc).
+    def mine(x: str) -> bool:
+        n = x.lower()
+        return n in ("seren-observatory", "serenobservatory") or n.startswith(("seren-observatory-", "serenobservatory-"))
+    return any(mine(x) for x in (unit, win))
 
 
 def reclaim_plan(all_manifests: dict[str, dict], *, exclude: set[str],

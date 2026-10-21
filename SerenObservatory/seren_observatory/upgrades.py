@@ -471,15 +471,20 @@ def check_peers(service: str, package: str, version: Optional[str], requires: li
 
 def node_versions() -> dict[str, dict[str, Any]]:
     """Every service on this node an upgrade can see: {name: {package,
-    version, needs, self}}. What Lodestar collects as the cluster's peers."""
+    version, needs, self, libs}}. What Lodestar collects as the cluster's
+    peers. `libs` is the shared libraries the venv runs (DEFAULT_WITH: sinew
+    and meninges), asked in the same breath as the service's own version:
+    Chad, 20 Oct 2026, "im guessing we dont expose what version of meninges
+    or sinew we are using in any of the services" - we did not."""
     out: dict[str, dict[str, Any]] = {}
     for name, m in sorted(manifests.load_services().items()):
         inst = find_install(m)
         if inst is None:
             continue
-        v = installed_versions(inst.python, [inst.package]).get(inst.package)
+        vs = installed_versions(inst.python, [inst.package, *DEFAULT_WITH])
         needs = [f"{r.name}{r.specifier}" for r in peer_needs(installed_requires(inst.python, inst.package))]
-        out[name] = {"package": inst.package, "version": v, "needs": needs, "self": is_self(inst)}
+        out[name] = {"package": inst.package, "version": vs.get(inst.package), "needs": needs,
+                     "self": is_self(inst), "libs": {d: vs.get(d) for d in DEFAULT_WITH}}
     return out
 
 

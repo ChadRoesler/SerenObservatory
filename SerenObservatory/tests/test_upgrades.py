@@ -526,4 +526,6 @@ async def test_asked_by_hand_the_peers_are_this_nodes_own(box):
                              json={"peers": [{"service": 3}]}, headers=OBS)).status_code == 400
     assert p["held"] and "seren-memory-wren is 5.0.0" in p["needs"]["problems"][0]
     assert v["services"] == {"seren-memory-wren": {"package": "seren-memory", "version": "5.0.0", "needs": [],
-                                                   "self": False}}, "llama: not a pip install, not listed"
+                                                   "self": False,
+                                                   "libs": {"seren-sinew": "1.10.0", "seren-meninges": "2.6.0"}}}, \
+        "llama: not a pip install, not listed; the venv's sinew and meninges come with its own version (20 Oct 2026)"

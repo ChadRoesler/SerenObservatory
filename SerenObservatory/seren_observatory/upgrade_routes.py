@@ -13,7 +13,8 @@ Upgrades of this node's services (seren_observatory.upgrades).
          "reason": "..."}
     GET  /api/v1/upgrades                 the recent jobs, newest first
     GET  /api/v1/upgrades/versions        every service here an upgrade can see: package,
-                                          version, and the peers it needs
+                                          version, the peers it needs, and the versions of
+                                          seren-sinew and seren-meninges its venv runs (libs)
     GET  /api/v1/upgrades/{id}            one job: its state, every step, pip's last lines
 
 Everything a request names ends up on a pip command line, so it is checked

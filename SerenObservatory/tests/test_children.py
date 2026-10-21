@@ -1,5 +1,5 @@
 """
-What a service owns (20 Oct 2026). Chad: "probe should own its sub processes
+What a service owns (20 Oct 2026). The ask: "probe should own its sub processes
 (the docker containers whatever) ... same with workbench, since it can own sub
 processes of its own (searxng whatever, this way we dont lie about whats
 there and what it has)".

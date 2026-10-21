@@ -1,5 +1,5 @@
 """
-Chad's third pass, 20 Oct 2026, the two bugs:
+The third pass, 20 Oct 2026, the two bugs:
 
 - Windows: "observatory cannot restart itself, though nssm it seems to throw
   a stop then start" - sc stop from inside the request killed the answer

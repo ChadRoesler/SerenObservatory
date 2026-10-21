@@ -68,7 +68,7 @@ async def test_no_path_at_all_is_reported_not_raised(fake_home):
 
 # ── transcribe: the clip goes to the whisper-server on this box ──────────────
 
-def _whisper_server(seen: dict, text: str = " Hello, Wren. [BLANK_AUDIO]", status: int = 200):
+def _whisper_server(seen: dict, text: str = " Hello there. [BLANK_AUDIO]", status: int = 200):
     """A scripted whisper-server: records what it was sent, answers `text`."""
     def handle(request: httpx.Request) -> httpx.Response:
         seen.update(url=str(request.url), method=request.method, content_type=request.headers.get("content-type", ""))
@@ -95,7 +95,7 @@ async def test_a_clip_is_forwarded_to_the_servers_endpoint_and_the_words_come_ba
     r = await _post_clip(fake_home, language="en")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["ok"] and body["text"] == "Hello, Wren." and body["model"] == "small.en", "the silence marker is dropped"
+    assert body["ok"] and body["text"] == "Hello there." and body["model"] == "small.en", "the silence marker is dropped"
     assert seen["url"] == "http://127.0.0.1:8081/v1/audio/transcriptions"
     assert seen["content_type"].startswith("multipart/form-data")
     for part in (b'name="file"; filename="clip.wav"', b"RIFF....WAVEfmt fake",

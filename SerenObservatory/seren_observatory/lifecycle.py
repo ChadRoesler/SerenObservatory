@@ -1758,7 +1758,7 @@ async def status(manifest: dict[str, Any]) -> dict[str, Any]:
         st["idle"] = True
     # What it belongs to, and what it owns (manifests: parent / children).
     # Lodestar folds the family under the owner so the card does not lie
-    # about what is there (Chad, 20 Oct 2026).
+    # about what is there (20 Oct 2026).
     parent = manifests.parent_of(manifest)
     if parent:
         st["parent"] = parent
@@ -1812,7 +1812,7 @@ def _tail_log_sync(manifest: dict[str, Any], lines: int = 100) -> dict[str, Any]
     log_path = manifest.get("log_path")
     # A systemd unit logs to journald unless its manifest says otherwise: the
     # seren-* units on the nuc have no log_path and no ~/seren-logs file, so
-    # every service's logs read as "does not exist yet" (Chad, 20 Oct 2026:
+    # every service's logs read as "does not exist yet" (20 Oct 2026:
     # "no logs for any of the seren services are appearing"). journalctl
     # needs no sudo for a user in adm or systemd-journal (caesar is in adm).
     if stype == "systemd" and not log_path:

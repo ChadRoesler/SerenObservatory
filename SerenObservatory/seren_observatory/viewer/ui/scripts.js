@@ -52,7 +52,7 @@ function renderHealthPill(health) {
     pill.textContent = `health: ${ok ? '' : 'degraded '}${health.healthy}/${health.total}${idle ? ` · ${idle} idle` : ''}`;
     pill.title = idle ? `${idle} orchestrated service(s) off until asked for: ${(health.idle || []).join(', ')}` : 'local service health';
     // The accent while everything that should be up is up; bright red when
-    // it is not (Chad, 20 Oct 2026, third pass: "head pill should be in
+    // it is not (20 Oct 2026, third pass: "head pill should be in
     // accent color").
     pill.className = 'head-pill ' + (ok ? 'hot' : 'bad');
     pill.style.display = '';
@@ -139,7 +139,7 @@ function svcRow(name, entry) {
     else if (idle) healthChip = `<span class="health-chip idle" title="orchestrated: started on demand, off until asked for">idle</span>`;
     else if (ph && ph.ok) healthChip = `<span class="health-chip up">up${ph.latency_ms != null ? ' ' + ph.latency_ms + 'ms' : ''}</span>`;
     else if (running && ph && !ph.ok) healthChip = `<span class="health-chip down">down</span>`;
-    // "On demand" is its own column (Chad, 20 Oct 2026): a chip there, and
+    // "On demand" is its own column (20 Oct 2026): a chip there, and
     // nothing riding on the type badge any more.
     const orchCell = orch ? `<span class="badge orch" title="orchestrated: Lodestar starts it when someone needs it and stops it when nobody does">on demand</span>`
                           : `<span class="col-na">-</span>`;

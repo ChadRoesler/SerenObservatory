@@ -49,14 +49,14 @@ async def test_words_reach_the_speaker_and_its_voice_comes_back_as_a_wav(fake_ho
     seen: dict = {}
     monkeypatch.setattr(speaker, "TRANSPORT", _server(seen))
     async with await _client(fake_home) as c:
-        r = await c.post("/api/v1/service/speaker/speak", json={"text": "Hi, it's Wren."})
+        r = await c.post("/api/v1/service/speaker/speak", json={"text": "Hi, it's me."})
     assert r.status_code == 200, r.text
     assert r.content == WAV and r.headers["content-type"].startswith("audio/wav")
     assert r.headers["x-seren-voice"] == "wren" and r.headers["x-seren-backend"] == "qwen3tts"
     assert r.headers["x-seren-clip-seconds"] == "4.9" and r.headers["x-seren-model"] == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     assert r.headers.get_list("x-seren-seconds") == ["4.1"], "the speaker's own timing, once - not beside a default"
     assert seen["url"] == "http://127.0.0.1:8087/speak"
-    assert json.loads(seen["body"]) == {"text": "Hi, it's Wren.", "voice": "wren"}
+    assert json.loads(seen["body"]) == {"text": "Hi, it's me.", "voice": "wren"}
 
 
 async def test_the_voices_are_listed(fake_home, monkeypatch):

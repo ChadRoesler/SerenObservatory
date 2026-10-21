@@ -167,7 +167,7 @@ def load_node() -> dict[str, Any] | None:
 
 def discover_node() -> dict[str, Any]:
     """What the box can say about itself without a node.json: hostname, its
-    non-loopback addresses, platform, cores. Chad, 20 Oct 2026: "noticed
+    non-loopback addresses, platform, cores. 20 Oct 2026: "noticed
     lodestar isnt reporting ips?" - no node on the constellation has ever
     had a ~/.seren/node.json (nothing writes one), so every card said "-"
     for host and ip. The file still wins when it exists; this is the floor.
@@ -337,7 +337,7 @@ def is_orchestrated(manifest: dict[str, Any]) -> bool:
 
 
 # ── parent / children: what a service owns ───────────────────────────────────
-# Chad, 20 Oct 2026: "probe should own its sub processes (the docker containers
+# 20 Oct 2026: "probe should own its sub processes (the docker containers
 # whatever) ... same with workbench, since it can own sub processes of its own
 # (searxng whatever, this way we dont lie about whats there and what it has)".
 # Two optional manifest keys say so; Lodestar's card folds the family under

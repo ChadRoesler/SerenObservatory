@@ -1,6 +1,5 @@
 """
-GET /api/v1/system/node without a ~/.seren/node.json (20 Oct 2026). Chad:
-"noticed lodestar isnt reporting ips?" - no node ever had the file, so the
+GET /api/v1/system/node without a ~/.seren/node.json (20 Oct 2026). The ask: "noticed lodestar isnt reporting ips?" - no node ever had the file, so the
 manifest came back null and every Lodestar card said "-" for host and ip.
 Now the box says what it knows: hostname, addresses, platform, cores, with
 `source: discovered`. The file still wins when it exists.

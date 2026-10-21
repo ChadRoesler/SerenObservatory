@@ -336,7 +336,7 @@ async def restart_self_via_nssm(manifest: dict[str, Any]) -> Optional[dict[str, 
 
     The ordinary way, for itself, was `sc stop` then `sc start` run INSIDE the
     request: the stop killed this process mid-answer, the client saw WinError
-    10054 and no start ever ran (Chad, 20 Oct 2026: "observatory cannot
+    10054 and no start ever ran (20 Oct 2026: "observatory cannot
     restart itself, though nssm it seems to throw a stop then start"). The
     self-upgrade already knew the answer: answer first, then leave, and let
     NSSM start it again. Same hand-off here, same checks (this IS the
@@ -474,7 +474,7 @@ def node_versions() -> dict[str, dict[str, Any]]:
     version, needs, self, libs}}. What Lodestar collects as the cluster's
     peers. `libs` is the shared libraries the venv runs (DEFAULT_WITH: sinew
     and meninges), asked in the same breath as the service's own version:
-    Chad, 20 Oct 2026, "im guessing we dont expose what version of meninges
+    20 Oct 2026, "im guessing we dont expose what version of meninges
     or sinew we are using in any of the services" - we did not."""
     out: dict[str, dict[str, Any]] = {}
     for name, m in sorted(manifests.load_services().items()):

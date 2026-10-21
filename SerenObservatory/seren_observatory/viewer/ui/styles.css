@@ -130,12 +130,12 @@ a { text-decoration: none; }
 /* -- service table ------------------------------------------------------- */
 /* One grid for the head and every row: the dot, the name, then the value
    columns (type, on demand, health, mem, cpu, uptime) and the actions.
-   Values are centred under their headings (Chad, 20 Oct 2026: "center
+   Values are centred under their headings (20 Oct 2026: "center
    values for columns"); the name stays left, the actions right. */
 /* The actions column is a fixed width in BOTH the head and the rows: as
    `auto` it was the width of its content, four buttons in a row and one
    word in the head, so every fr column landed somewhere else in the head
-   than in the rows and the headings sat off their values (Chad, 20 Oct
+   than in the rows and the headings sat off their values (20 Oct
    2026, with a screenshot). */
 .svc-head, .svc-row {
     display: grid;

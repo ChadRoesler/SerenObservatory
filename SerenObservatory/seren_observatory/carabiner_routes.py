@@ -6,6 +6,8 @@ The carabiners clipped on this box, for Lodestar's Rack
     GET  /api/v1/carabiner/{name}/settings        its settings, as the carabiner says them
     POST /api/v1/carabiner/{name}/settings        SettingsRequest -> SettingsResult
     GET  /api/v1/carabiner/{name}/belay           does it still hold
+    POST /api/v1/carabiner/{name}/upgrade         UpgradeRequest -> UpgradeResult: a new .kbh, sent
+                                                  by Lodestar, checked and swapped in by kbh itself
 
 The Observatory carries; the carabiner decides. Each call runs the .kbh AS
 the person whose yaml it is and passes on what it answered: which settings
@@ -23,7 +25,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from seren_sinew.carabiners import CarabinerEntry, KbhRunner, SettingsRequest
+from seren_sinew.carabiners import CarabinerEntry, KbhRunner, SettingsRequest, UpgradeRequest
 
 from . import manifests
 
@@ -37,7 +39,8 @@ def make_runner(cfg) -> Optional[KbhRunner]:
         return None
     node = (manifests.load_node() or {}).get("hostname") or socket.gethostname()
     return KbhRunner(folder=c.folder, python=c.python or sys.executable, run_as=c.run_as or cfg.ripple.run_as,
-                     timeout_seconds=c.timeout_seconds, node=str(node))
+                     timeout_seconds=c.timeout_seconds, upgrade_timeout_seconds=c.upgrade_timeout_seconds,
+                     node=str(node))
 
 
 def _gate(request: Request) -> Optional[JSONResponse]:
@@ -85,3 +88,13 @@ async def carabiner_belay(name: str, request: Request):
     if (refused := _gate(request)) is not None:
         return refused
     return _answer(await asyncio.to_thread(request.app.state.kbh.belay, name))
+
+
+@router.post("/carabiner/{name}/upgrade")
+async def upgrade_carabiner(name: str, request: Request, body: dict | None = None):
+    """The file comes in the body; this box never fetches one. The hash is
+    checked before anything of it runs (seren_sinew.carabiners)."""
+    if (refused := _gate(request)) is not None:
+        return refused
+    req = UpgradeRequest.from_dict(body)
+    return _answer(await asyncio.to_thread(request.app.state.kbh.upgrade, name, req))

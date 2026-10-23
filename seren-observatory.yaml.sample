@@ -39,3 +39,4 @@ server:
 #   python: ""            # blank = this Observatory's own python
 #   run_as: ""
 #   timeout_seconds: 60
+#   upgrade_timeout_seconds: 600   # an upgrade belays before and after the swap

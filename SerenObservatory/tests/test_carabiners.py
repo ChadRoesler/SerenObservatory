@@ -107,3 +107,39 @@ def test_the_yaml_block_is_read_like_ripple(tmp_path, monkeypatch):
     y.write_text("carabiners:\n  enabled: true\n  folder: /x/kbh\n  run_as: alice\n  nonsense: 1\n", encoding="utf-8")
     cfg = load_config(str(y))
     assert cfg.carabiners.enabled and cfg.carabiners.folder == "/x/kbh" and cfg.carabiners.run_as == "alice"
+
+
+UPGRADING_MAIN = textwrap.dedent('''
+    import json, shutil, sys
+    args = sys.argv[1:]
+    if args[:1] == ["upgrade"]:
+        shutil.copyfile(args[args.index("--from") + 1], args[args.index("--into") + 1])
+        print(json.dumps({"ok": True, "was": "5.1.3", "now": "5.1.4", "changed": True, "sha256_checked": True}))
+''')
+
+
+def test_an_upgrade_comes_in_the_body_is_checked_and_kbh_swaps_it(fake_home, monkeypatch, tmp_path):
+    """23 Oct 2026: Lodestar sends the file; this box never fetches one."""
+    import zipfile
+    from seren_sinew.carabiners import UpgradeRequest
+    folder = tmp_path / "zkbh"
+    folder.mkdir()
+    for path, v in ((folder / "claude.kbh", "5.1.3"), (tmp_path / "new.kbh", "5.1.4")):
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("__main__.py", UPGRADING_MAIN)
+            zf.writestr("kbh/__init__.py", f'__version__ = "{v}"\n')
+            zf.writestr("kbh/upgrade.py", "")
+    new = (tmp_path / "new.kbh").read_bytes()
+    c = _client(fake_home, monkeypatch, _on(folder))
+    listed = c.get("/api/v1/carabiners").json()["carabiners"][0]
+    assert listed["version"] == "5.1.3" and len(listed["sha256"]) == 64
+
+    req = UpgradeRequest.carrying(new, node="desktop")
+    r = c.post("/api/v1/carabiner/claude/upgrade", json={**req.to_dict(), "sha256": "0" * 64})
+    assert r.status_code == 200 and not r.json()["ok"] and "damaged" in r.json()["error"]
+    r = c.post("/api/v1/carabiner/claude/upgrade", json=req.to_dict())
+    assert r.status_code == 200 and r.json()["ok"] and r.json()["now"] == "5.1.4", r.json()
+    assert (folder / "claude.kbh").read_bytes() == new
+    assert c.post("/api/v1/carabiner/toaster/upgrade", json=req.to_dict()).status_code == 404
+    assert _client(fake_home, monkeypatch, _on(folder), token=None).post(
+        "/api/v1/carabiner/claude/upgrade", json=req.to_dict()).status_code in (403, 503),         "no token: the auth interlock (503) or the carabiner gate (403), never a run"

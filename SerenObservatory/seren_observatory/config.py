@@ -108,6 +108,9 @@ class CarabinersConfig(BaseModel):
     # write it as itself.
     run_as: str = ""
     timeout_seconds: int = 60
+    # An upgrade belays before and after the swap; each belay waits on every
+    # service the yaml names.
+    upgrade_timeout_seconds: int = 600
 
 
 class ObservatoryConfig(BaseModel):

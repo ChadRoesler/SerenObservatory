@@ -28,3 +28,14 @@
 server:
   host: 0.0.0.0    # reachable across the trusted LAN (cluster plane)
   port: 7777
+
+# The carabiners clipped on this box, for Lodestar's Rack: every <name>.kbh in
+# `folder` with its <name>.yaml beside it, read and changed by running the
+# .kbh as run_as (blank = ripple.run_as, the person the model here belongs to).
+# Off until enabled, and shut without the token above, GETs included.
+# carabiners:
+#   enabled: true
+#   folder: C:\Users\you\seren\brain\kbh
+#   python: ""            # blank = this Observatory's own python
+#   run_as: ""
+#   timeout_seconds: 60

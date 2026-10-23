@@ -93,6 +93,23 @@ class RippleConfig(BaseModel):
     stdin: bool = False
 
 
+class CarabinersConfig(BaseModel):
+    """The carabiners clipped on this box, for Lodestar's Rack: every
+    <name>.kbh in `folder` with its <name>.yaml beside it, read and changed
+    by running the .kbh AS `run_as` (seren_sinew.carabiners has the why).
+    Off until enabled; a caller names a carabiner, never a path or a
+    command."""
+    enabled: bool = False
+    folder: str = ""
+    # What runs the .kbh. Blank = this Observatory's own python.
+    python: str = ""
+    # Whose account it runs as. Blank = ripple.run_as, the person the model on
+    # this box belongs to; the yaml is theirs, and a root service must not
+    # write it as itself.
+    run_as: str = ""
+    timeout_seconds: int = 60
+
+
 class ObservatoryConfig(BaseModel):
     """seren-observatory network config. Defaults match the cluster convention:
     bind all interfaces (trusted LAN) on 7777.
@@ -115,6 +132,7 @@ class ObservatoryConfig(BaseModel):
     manifests_dir: str = "~/.seren/services"
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
     ripple: RippleConfig = Field(default_factory=RippleConfig)
+    carabiners: CarabinersConfig = Field(default_factory=CarabinersConfig)
 
 
 _DEFAULT_CONFIG_PATH = Path.home() / "seren-observatory" / "seren-observatory.yaml"
@@ -219,7 +237,7 @@ def load_config(path: Optional[str] = None) -> ObservatoryConfig:
             _apply_server_overrides(cfg, server, source=str(yaml_path))
         elif server is not None:
             print(f"[seren-observatory] config: 'server' in {yaml_path} must be a mapping; ignoring")
-        for block in ("updates", "ripple"):
+        for block in ("updates", "ripple", "carabiners"):
             values = data.get(block)
             if isinstance(values, dict):
                 _apply_block(cfg, block, values, source=str(yaml_path))

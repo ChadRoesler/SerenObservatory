@@ -95,6 +95,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     secrets_path = resolve_secrets_path(cfg.secrets_path)
     app.state.secrets_path = secrets_path          # other per-node keys live there too (comfy's civitai_key)
     token = load_token(secrets_path)
+    app.state.has_token = bool(token)              # the carabiner routes stay shut without one, GETs too
     app.add_middleware(BearerAuthMiddleware, expected_token=token,
                        secrets_path=secrets_path)
     app.add_middleware(
@@ -138,6 +139,12 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     # person. Off until ripple.enabled.
     from .ripple import RippleRunner
     app.state.ripple = RippleRunner(cfg.ripple)
+
+    # The carabiners clipped here, for Lodestar's Rack (seren_observatory.
+    # carabiner_routes): run as the same person a ripple runs as. Off until
+    # carabiners.enabled.
+    from .carabiner_routes import make_runner
+    app.state.kbh = make_runner(cfg)
 
     # Root info page - no service data, just links + auth status indicator
     @app.get("/", response_class=HTMLResponse)
@@ -230,8 +237,10 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
         log.info("could not read upgrade jobs (%s)", exc)
 
     # System routes (ping, version, node, services, health, reclaim)
+    from .carabiner_routes import router as carabiner_router
     app.include_router(system_router)
     app.include_router(upgrade_router)
+    app.include_router(carabiner_router)
 
     # Service routes: one universal router that discovers manifests per
     # request, plus the service-specific handlers (code, not installs).

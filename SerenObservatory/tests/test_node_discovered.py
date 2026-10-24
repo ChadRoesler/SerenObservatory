@@ -32,10 +32,10 @@ def test_without_the_file_the_node_is_discovered(fake_home, monkeypatch):
 
 def test_the_file_still_wins(fake_home, monkeypatch):
     manifests.node_path().parent.mkdir(parents=True, exist_ok=True)
-    manifests.node_path().write_text(json.dumps({"schema_version": 1, "hostname": "brain", "ip_addresses": ["192.168.0.200"]}))
+    manifests.node_path().write_text(json.dumps({"schema_version": 1, "hostname": "brain", "ip_addresses": ["192.0.2.200"]}))
     c = _client(monkeypatch)
     m = c.get("/api/v1/system/node").json()["manifest"]
-    assert m["hostname"] == "brain" and m["ip_addresses"] == ["192.168.0.200"] and "source" not in m
+    assert m["hostname"] == "brain" and m["ip_addresses"] == ["192.0.2.200"] and "source" not in m
 
 
 def test_discovery_never_raises_when_the_box_is_shy(monkeypatch):

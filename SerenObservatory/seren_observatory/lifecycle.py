@@ -1814,7 +1814,7 @@ def _tail_log_sync(manifest: dict[str, Any], lines: int = 100) -> dict[str, Any]
     # seren-* units on the nuc have no log_path and no ~/seren-logs file, so
     # every service's logs read as "does not exist yet" (20 Oct 2026:
     # "no logs for any of the seren services are appearing"). journalctl
-    # needs no sudo for a user in adm or systemd-journal (caesar is in adm).
+    # needs no sudo for a user in adm or systemd-journal (alice is in adm).
     if stype == "systemd" and not log_path:
         return _journal_tail(manifest, lines)
     if not log_path:

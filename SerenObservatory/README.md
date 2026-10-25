@@ -99,6 +99,7 @@ TOKEN=$(jq -r .observatory_token ~/.seren/secrets.json)   # or wherever SEREN_OB
 curl -H "Authorization: Bearer $TOKEN" localhost:7777/api/v1/system/node
 curl -H "Authorization: Bearer $TOKEN" localhost:7777/api/v1/system/services
 curl -H "Authorization: Bearer $TOKEN" localhost:7777/api/v1/system/health
+curl -H "Authorization: Bearer $TOKEN" localhost:7777/api/v1/system/carabiners   # the .kbh clips on the box
 
 # Drive a specific service (start/stop/restart/health/status/logs/manifest):
 curl -H "Authorization: Bearer $TOKEN" \

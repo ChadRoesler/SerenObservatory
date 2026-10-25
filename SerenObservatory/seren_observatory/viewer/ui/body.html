@@ -1,6 +1,6 @@
 <!-- Two .view panels the shell's showTab() toggles. System = node vitals +
-     node.json + thermal zones. Services = the roster table with lifecycle
-     controls + an on-demand log peek. #error-slot carries connect/auth errors
+     node.json + thermal zones + the carabiners clipped on the box. Services =
+     the roster table with lifecycle controls + an on-demand log peek. #error-slot carries connect/auth errors
      (e.g. a 401 prompting the token, surfaced by scripts.js). -->
 <div id="error-slot"></div>
 
@@ -15,6 +15,12 @@
             <h3>Thermal</h3>
             <div id="thermal-body"></div>
         </div>
+    </div>
+    <!-- Every .kbh on the box, Rack or no Rack (24 Oct 2026); it rides on
+         /system/node, so no fetch of its own. -->
+    <div class="card wide">
+        <h3>Carabiners</h3>
+        <div id="clips-body"></div>
     </div>
 </section>
 

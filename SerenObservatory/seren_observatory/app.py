@@ -145,6 +145,10 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
     # carabiners.enabled.
     from .carabiner_routes import make_runner
     app.state.kbh = make_runner(cfg)
+    # Which carabiners are on the box at all, Rack or no Rack (seren_observatory.
+    # carabiner_inventory): /system/carabiners and /system/node read the
+    # Rack's folder from here.
+    app.state.carabiners = cfg.carabiners
 
     # Root info page - no service data, just links + auth status indicator
     @app.get("/", response_class=HTMLResponse)
@@ -199,7 +203,7 @@ def create_app(cfg: ObservatoryConfig | None = None) -> FastAPI:
   <li><a href="/docs">/docs</a> - interactive API docs (Swagger)</li>
   <li><a href="/api/v1/system/ping">/api/v1/system/ping</a> - public liveness</li>
   <li><a href="/api/v1/system/version">/api/v1/system/version</a> - public version</li>
-  <li>/api/v1/system/{{node, services, health, reclaim}} - auth required</li>
+  <li>/api/v1/system/{{node, services, carabiners, health, reclaim}} - auth required</li>
   <li>/api/v1/service/{{name}}/{{start, stop, restart, health, status, logs, manifest}} - auth required</li>
 </ul>
 <p class="foot">Source of truth: {roster} + {node_file}</p>

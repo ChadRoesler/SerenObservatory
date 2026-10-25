@@ -1,11 +1,6 @@
 :root {
-    --bg: #14141f;
-    --bg-2: #1a1a2e;
-    --panel: #1f2036;
-    --panel-2: #262844;
-    --line: #33365a;
-    --muted: #9aa0c8;
-    --faint: #6c7199;
+    /* the walls (--bg, --bg-2, --panel, --panel-2, --line, --muted, --faint)
+       come from the shell, tinted 5% by this service's accent (24 Oct 2026) */
     /* --accent (green) comes from the shell (render_from_dir accent=#6eff70).
        Body text is --text and base font --font (shell tokens), used directly. */
     --ok: #3fb950; /* running / healthy */
@@ -117,6 +112,18 @@ a { text-decoration: none; }
     .zone .zbar > span { display: block; height: 100%; background: var(--ok); }
     .zone.warm .zbar > span { background: var(--warn); }
     .zone.hot .zbar > span { background: var(--danger); }
+
+/* -- carabiners (the .kbh clips on the box) ------------------------------ */
+.card.wide { margin-top: 16px; }
+.clip {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 7px 0;
+    font-family: var(--mono); font-size: 12px;
+    border-bottom: 1px solid var(--line);
+}
+    .clip:last-child { border-bottom: none; }
+    .clip .nm { color: var(--text); font-weight: 600; }
+    .clip .where { flex-basis: 100%; color: var(--faint); padding-left: 17px; word-break: break-all; }
 
 /* -- toolbar / hints ----------------------------------------------------- */
 .toolbar {

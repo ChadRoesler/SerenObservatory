@@ -46,11 +46,23 @@ async def version(request: Request) -> dict[str, Any]:
     }
 
 
+async def _carabiners_here(request: Request, node: str | None = None) -> dict[str, Any]:
+    """carabiner_inventory.installed, off the event loop (it hashes each .kbh).
+    A failure is an empty list with the reason, never a failed answer."""
+    from .carabiner_inventory import installed
+    try:
+        return await asyncio.to_thread(installed, getattr(request.app.state, "carabiners", None), node)
+    except Exception as exc:  # noqa: BLE001 - the clips never cost the node its vitals
+        return {"carabiners": [], "looked_in": [], "error": f"{type(exc).__name__}: {exc}"}
+
+
 @router.get("/node")
-async def node_info() -> dict[str, Any]:
+async def node_info(request: Request) -> dict[str, Any]:
     """Returns ~/.seren/node.json plus runtime stats (load, free memory, etc).
 
-    For the dashboard's "what is this box?" panel.
+    For the dashboard's "what is this box?" panel. `carabiners` is what is
+    clipped on the box (see /system/carabiners), here so the poll Lodestar
+    already makes of every node carries it (24 Oct 2026).
     """
     # The file when there is one, else what the box says about itself: the
     # cards used to show "-" for host and ip on every node (20 Oct 2026).
@@ -91,7 +103,23 @@ async def node_info() -> dict[str, Any]:
     except OSError:
         pass
 
-    return {"manifest": n, "runtime": runtime}
+    clips = await _carabiners_here(request, str((n or {}).get("hostname") or "") or None)
+    return {"manifest": n, "runtime": runtime, "carabiners": clips["carabiners"]}
+
+
+@router.get("/carabiners")
+async def carabiners_installed(request: Request) -> dict[str, Any]:
+    """Every carabiner clipped on this box, whether or not the Rack can reach
+    it: name, version, sha256, where its .kbh is, whether it has its yaml,
+    and what the install ledger says about it (seren_observatory.
+    carabiner_inventory has where it looks and why). Runs nothing, so it is
+    open like /system/services, not shut behind the Rack's gate.
+    `looked_in` is every folder read: a clip that is not listed is in none
+    of them."""
+    clips = await _carabiners_here(request)
+    rows = clips["carabiners"]
+    return {"ok": "error" not in clips, "count": len(rows), "carabiners": rows,
+            "looked_in": clips["looked_in"], **({"error": clips["error"]} if "error" in clips else {})}
 
 
 @router.get("/thermal")

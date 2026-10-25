@@ -121,6 +121,41 @@ function renderThermal(thermal) {
     }).join('');
 }
 
+// The .kbh clips on the box (24 Oct 2026: "Observatory should be aware of
+// what carabiners are installed on the box"). They ride on /system/node;
+// an Observatory from before says nothing, which is not the same as none.
+function renderCarabiners(node) {
+    const box = $('clips-body');
+    if (!node) { box.innerHTML = `<div class="hint">-</div>`; return; }
+    if (!Array.isArray(node.carabiners)) {
+        box.innerHTML = `<div class="hint">this Observatory does not report carabiners</div>`;
+        return;
+    }
+    if (!node.carabiners.length) {
+        box.innerHTML = `<div class="hint">no carabiners clipped on this node</div>`;
+        return;
+    }
+    box.innerHTML = node.carabiners.map(c => {
+        const inst = c.install || {};
+        const chips = [];
+        if (!c.present) chips.push(`<span class="health-chip down" title="the install ledger says it was put here; the .kbh is not there now">missing</span>`);
+        else if (!c.configured) chips.push(`<span class="health-chip na" title="no ${escapeHtml(c.carabiner)}.yaml beside the .kbh">no yaml</span>`);
+        if (c.rack) chips.push(`<span class="badge orch" title="in carabiners.folder: Lodestar's Rack can read and change its settings">on the Rack</span>`);
+        const said = [];
+        if (inst.installed_at) said.push(`installed ${inst.installed_at.slice(0, 10)}`);
+        if (inst.source) said.push(`from ${inst.source}${inst.source_ref ? ' ' + inst.source_ref : ''}`);
+        if (inst.instance) said.push(`instance ${inst.instance}`);
+        if (inst.project) said.push(`works in ${inst.project}`);
+        return `<div class="clip">
+            <span class="dot ${c.present ? 'run' : 'bad'}"></span>
+            <span class="nm">${escapeHtml(c.carabiner)}</span>
+            <span class="badge" title="${escapeHtml(c.sha256 ? 'sha256 ' + c.sha256 : 'no version read from the file')}">${escapeHtml(c.version || '?')}</span>
+            ${chips.join('')}
+            <div class="where">${escapeHtml(c.kbh)}${said.length ? ' · ' + escapeHtml(said.join(' · ')) : ''}</div>
+        </div>`;
+    }).join('');
+}
+
 // -- services panel ------------------------------------------------------
 function svcRow(name, entry) {
     const st = entry.status || {};
@@ -245,6 +280,7 @@ async function boot() {
     renderVitals(nodeV, thermalV, healthV);
     renderNodeMeta(nodeV);
     renderThermal(thermalV);
+    renderCarabiners(nodeV);
 
     if (services.status === 'fulfilled') renderServices(services.value);
     else $('svc-table').innerHTML = `<div class="empty">${statusOf(services.reason) === 401 ? 'enter your token to load services' : 'services unavailable'}</div>`;

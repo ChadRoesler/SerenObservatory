@@ -34,6 +34,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Request
+from seren_sinew.atomic import write_json
 
 from .. import comfy_catalog, manifests
 
@@ -150,9 +151,7 @@ class _Scanner:
         cat = comfy_catalog.scan(root, _read_json(out), hash_what, civitai, key, host,
                                  _read_json(fixes) if fixes.is_file() else None,
                                  log=lambda m: self.state.update(last=m))
-        tmp = out.with_suffix(".tmp")
-        tmp.write_text(json.dumps(cat, indent=1), encoding="utf-8")
-        os.replace(tmp, out)
+        write_json(out, cat, indent=1)
         return cat
 
     def start(self, root: Path, hash_what: str, civitai: bool, key: str, host: str) -> bool:
@@ -353,9 +352,7 @@ def register(router: APIRouter) -> None:
             all_[model.strip()] = prof
         else:
             all_.pop(model.strip(), None)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(all_, indent=1), encoding="utf-8")
-        os.replace(tmp, path)
+        write_json(path, all_, indent=1)
         return {"ok": True, "profiles": all_}
 
     @router.post("/catalog/scan")

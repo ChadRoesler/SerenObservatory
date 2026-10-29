@@ -38,6 +38,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException
+from seren_sinew.atomic import write_text
 
 from .. import manifests
 
@@ -106,9 +107,7 @@ def set_env_model(path: Path, model_path: str) -> dict[str, str]:
         out.append(f"LLAMA_MODEL={model_path}")
         if prev:
             out.append(f"LLAMA_MODEL_PREVIOUS={prev}")
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    write_text(path, "\n".join(out) + "\n")
     return read_env(path)
 
 

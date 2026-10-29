@@ -159,6 +159,27 @@ service here an upgrade can see, its version and what it needs.
 
 ---
 
+## On Windows
+
+A Windows box (a desktop running Symposium and a few NSSM services) is a
+node like any other, with three differences worth knowing:
+
+- **Services are `windows_service` or `launcher` manifests**, driven with
+  `sc.exe` through a per-service grant the Starwright card writes, or started
+  detached for a per-user app. Their memory, CPU and uptime come from Win32
+  (`seren_observatory.winproc`: the service's whole process tree, since an
+  NSSM service is nssm.exe, the venv's launcher and the interpreter), and the
+  box's memory and uptime on `/system/node` likewise. There is no load
+  average on Windows; the key is left out.
+- **A closed port is looked up, not probed.** With the firewall up, Windows
+  drops a connection to a closed port instead of refusing it, loopback
+  included, so a probe of a down service would wait its whole timeout. The
+  Observatory asks the TCP table first and answers "nothing is listening on
+  port N" at once. The same table drives the port wait in a restart (a bind
+  test with `SO_REUSEADDR` always succeeds on Windows).
+- **Reboot is `shutdown /r /t <seconds>`**, cancel is `shutdown /a`; the
+  service's account needs the shut-down privilege.
+
 ## What it logs (and where)
 
 Every request is logged - timing, status, and full tracebacks on 500s - to
@@ -227,5 +248,11 @@ run one on every node in your cluster.
 On its own it's a tidy, auth-gated, manifest-driven service manager for a
 single box. As part of the constellation, it's how the whole thing becomes
 one cluster instead of a pile of separate machines.
+
+The shapes this service answers with are the dataclasses in
+`seren_sinew.cluster.dtos`, the same ones Lodestar parses. `tests/
+test_wire_contract.py` parses every polled route's real answer with them
+strictly, so a key added here that the head does not know fails a test here
+rather than vanishing on the head.
 
 Rip it and win.

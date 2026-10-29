@@ -32,6 +32,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
+from seren_sinew.request_log import request_id_hooks
 
 from . import manifests
 
@@ -86,7 +87,7 @@ async def _forward(name: str, method: str, path: str, body: Optional[dict] = Non
                    content: Optional[bytes] = None, timeout: float = TIMEOUT) -> httpx.Response:
     base, headers = _target(name)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, event_hooks=request_id_hooks(asynchronous=True)) as client:
             if content is not None:
                 return await client.request(method, base + path, content=content,
                                             headers={**headers, "Content-Type": "application/gzip"})
@@ -134,7 +135,7 @@ async def _stream(name: str, path: str, keep: tuple[str, ...], timeout: float = 
     """A GET to the service, its body streamed through: never held in this
     process whole. A non-200 answer is relayed the way the JSON routes do."""
     base, headers = _target(name)
-    client = httpx.AsyncClient(timeout=timeout)
+    client = httpx.AsyncClient(timeout=timeout, event_hooks=request_id_hooks(asynchronous=True))
     try:
         r = await client.send(client.build_request("GET", base + path, headers=headers), stream=True)
     except httpx.RequestError as e:

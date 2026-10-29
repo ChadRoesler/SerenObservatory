@@ -40,7 +40,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from . import manifests
+from . import manifests, winproc
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -266,8 +266,28 @@ async def proc_cpu_percent(pid: int, sample_ms: int = 100) -> float | None:
     return round((proc_delta / sys_delta) * 100.0 * n_cores, 1)
 
 
+def _nothing_listens_here(url: str) -> bool:
+    """On Windows: the URL points at this box and its TCP table says nothing
+    listens on the port. A Windows box with its firewall up drops a SYN to a
+    closed port instead of refusing it, loopback included, so without this
+    look a probe of a down service waits its whole timeout (2s, three URLs
+    per status: measured 28 Oct 2026). Off Windows, or when the table
+    cannot be read, False: the probe goes ahead as before."""
+    try:
+        parts = urlsplit(url)
+        if not winproc.IS_WINDOWS or not parts.port or not winproc.host_is_this_box(parts.hostname or ""):
+            return False
+        return winproc.port_is_listening(parts.port) is False
+    except (ValueError, OSError):
+        return False
+
+
 async def _http_probe(url: str, timeout: float = 2.0) -> dict[str, Any]:
-    """Generic HTTP GET probe. Shape matches port_health response."""
+    """Generic HTTP GET probe. Shape matches port_health response. The error
+    is never an empty string: a ConnectTimeout's str() is '' and the status
+    read 'error: ' for a service that was simply down."""
+    if _nothing_listens_here(url):
+        return {"ok": False, "error": f"nothing is listening on port {urlsplit(url).port}"}
     t0 = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -278,15 +298,29 @@ async def _http_probe(url: str, timeout: float = 2.0) -> dict[str, Any]:
             "status_code": response.status_code,
             "latency_ms": latency_ms,
         }
+    except httpx.TimeoutException as e:
+        return {"ok": False, "error": str(e) or f"no answer from {url} within {timeout:g}s ({type(e).__name__})"}
     except httpx.RequestError as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e) or f"{type(e).__name__} probing {url}"}
 
 
 def _wait_for_port_release(port: int, timeout_s: float = 10.0) -> bool:
-    """Poll until the port is unbound, or timeout. Used by restart()."""
+    """Poll until the port is unbound, or timeout. Used by restart().
+
+    On Windows the TCP table is asked, not a bind: a bind with SO_REUSEADDR
+    SUCCEEDS there against a port another process listens on, so the bind
+    test always said 'released' and a restart started the new process on
+    top of the old one's port."""
     if port <= 0:
         return True
     deadline = time.monotonic() + timeout_s
+    if winproc.IS_WINDOWS:
+        while True:
+            if winproc.port_is_listening(port) is not True:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.25)
     while time.monotonic() < deadline:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -853,10 +887,14 @@ async def _windows_status(manifest: dict[str, Any]) -> dict[str, Any]:
         health_url = manifest.get("health_url")
         port_health = await (_http_probe(health_url) if health_url else _pid_port_health(manifest))
 
-    # Memory, CPU and uptime come from /proc on a node; Windows has no /proc,
-    # so they are None here rather than a guess.
+    # Memory, CPU and uptime: /proc on a node, Win32 here (winproc). sc's pid
+    # is nssm.exe; the service is its tree (nssm, the venv's launcher, the
+    # interpreter), so the memory is the tree's and the uptime nssm's.
+    stats = await asyncio.to_thread(winproc.process_stats, pid) if pid else {}
+    cpu = await winproc.cpu_percent(pid) if pid else None
     return {**base, "running": True, "state": state, "pid": pid or None,
-            "memory_mb": None, "cpu_percent": None, "uptime_seconds": None,
+            "memory_mb": stats.get("memory_mb"), "cpu_percent": cpu,
+            "uptime_seconds": stats.get("uptime_seconds"),
             "port_health": port_health}
 
 
@@ -1065,13 +1103,17 @@ async def _launcher_status(manifest: dict[str, Any]) -> dict[str, Any]:
     if manifests.service_has_port(manifest):
         health_url = manifest.get("health_url")
         port_health = await (_http_probe(health_url) if health_url else _pid_port_health(manifest))
-    # Memory, CPU and uptime come from /proc; Windows has none, so None there
-    # rather than a guess (as for a windows_service).
-    unix = os.name != "nt"
+    # Memory, CPU and uptime: /proc on a node, Win32 on Windows (winproc,
+    # the process and what it started).
+    if os.name == "nt":
+        stats = await asyncio.to_thread(winproc.process_stats, pid)
+        return {**base, "running": True, "pid": pid,
+                "memory_mb": stats.get("memory_mb"), "cpu_percent": await winproc.cpu_percent(pid),
+                "uptime_seconds": stats.get("uptime_seconds"), "port_health": port_health}
     return {**base, "running": True, "pid": pid,
-            "memory_mb": proc_rss_mb(pid) if unix else None,
-            "cpu_percent": (await proc_cpu_percent(pid)) if unix else None,
-            "uptime_seconds": proc_uptime_seconds(pid) if unix else None,
+            "memory_mb": proc_rss_mb(pid),
+            "cpu_percent": await proc_cpu_percent(pid),
+            "uptime_seconds": proc_uptime_seconds(pid),
             "port_health": port_health}
 
 

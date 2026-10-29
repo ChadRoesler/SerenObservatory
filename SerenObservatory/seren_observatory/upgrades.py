@@ -95,10 +95,13 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
+
+from seren_sinew.atomic import write_json
 
 from . import lifecycle, manifests
 
@@ -556,6 +559,12 @@ class UpgradeJob:
     peers: Optional[list[dict[str, Any]]] = None    # what the cluster runs; None = this node's own
     needs: Optional[dict[str, Any]] = None          # the peer check, last made
     error: Optional[str] = None
+    #: A job that ended done with something to say: a step raised after the
+    #: service was already up on the new version (see Upgrader._crashed).
+    warning: Optional[str] = None
+    #: When pip finished: the mark a restart has to come after for the new
+    #: version to be the one running.
+    installed_at: Optional[float] = None
 
     def as_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -575,6 +584,13 @@ class UpgradeJob:
         self.step = step
         self.steps.append({"step": step, "ok": ok, "at": time.time(), **more})
 
+    def at(self, step: str) -> None:
+        """Name the step about to run, before it runs, so a crash inside it
+        is recorded against the right step. A note comes after; a step that
+        raises never gets one, which is how a failed job came to say nothing
+        about its restart (19 Oct 2026)."""
+        self.step = step
+
 
 def job_dir(job_id: str) -> Path:
     return upgrades_dir() / job_id
@@ -583,10 +599,7 @@ def job_dir(job_id: str) -> Path:
 def save(job: UpgradeJob) -> None:
     d = upgrades_dir()
     d.mkdir(parents=True, exist_ok=True)
-    p = d / f"{job.id}.json"
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(job.as_dict(), indent=2), encoding="utf-8")
-    os.replace(tmp, p)
+    write_json(d / f"{job.id}.json", job.as_dict())
 
 
 def load(job_id: str) -> Optional[UpgradeJob]:
@@ -719,7 +732,10 @@ class Upgrader:
                 await self._run(job, inst, manifest, snapshot, wait_seconds)
             except Exception as e:  # noqa: BLE001 - a job always ends with a state, never a dead task
                 log.exception("upgrade %s crashed", job.id)
-                job.error = f"{type(e).__name__}: {e}"
+                try:
+                    await self._crashed(job, inst, manifest, e)
+                except Exception as e2:  # noqa: BLE001 - the look at the service must not hide the crash
+                    job.error = f"{type(e).__name__}: {e} (and looking at the service after: {type(e2).__name__}: {e2})"
                 if job.state not in TERMINAL:
                     job.state = "failed"
             finally:
@@ -752,6 +768,7 @@ class Upgrader:
         save(job)
 
         # 2. the stores
+        job.at("snapshot")
         if snapshot:
             snap = await take_snapshot(job.service, f"before upgrade {job.id}")
             job.snapshot = snap
@@ -763,6 +780,7 @@ class Upgrader:
         save(job)
 
         # 3. the config
+        job.at("config")
         held = job_dir(job.id) / "config"
         held.mkdir(parents=True, exist_ok=True)
         for p in config_files(inst):
@@ -777,6 +795,7 @@ class Upgrader:
             await lifecycle.stop(manifest)
 
         # 4. install
+        job.at("install")
         r = await asyncio.to_thread(_run, install_argv(inst, job.version, job.with_), PIP_TIMEOUT_S)
         job.pip = _tail(r.get("out", ""))
         if not r["ok"]:
@@ -784,10 +803,12 @@ class Upgrader:
             await self._roll_back(job, inst, manifest, restart=windows, reason="pip failed")
             return
         job.after = await asyncio.to_thread(installed_versions, inst.python, dists)
+        job.installed_at = time.time()
         job.note("install", True, after=job.after)
         save(job)
 
         # 5. preflight
+        job.at("preflight")
         pre = await asyncio.to_thread(_run, [inst.python, "-c", f"import {inst.module}"], PREFLIGHT_TIMEOUT_S)
         if not pre["ok"]:
             job.note("preflight", False, out=_tail(pre.get("out", ""), 10))
@@ -830,7 +851,9 @@ class Upgrader:
                 await self._roll_back(job, inst, manifest, restart=False,
                                       reason="systemd would not restart the Observatory")
             return
+        job.at("restart")
         res = await (lifecycle.start(manifest) if windows else lifecycle.restart(manifest))
+        job.at("health")
         healthy = res.get("ok", False) and await wait_healthy(manifest, wait_seconds)
         job.note("restart", healthy, **({} if healthy else {"error": res.get("error") or "no health within "
                                                             f"{wait_seconds:.0f}s"}))
@@ -839,6 +862,7 @@ class Upgrader:
             return
 
         # 7. put the config back if anything changed it
+        job.at("put_back")
         changed = put_back(job, keep_changed=True)
         if changed:
             job.note("put_back", True, files=changed)
@@ -852,9 +876,71 @@ class Upgrader:
             job.note("put_back", True, files=[])
 
         # 8. the ledger
+        job.at("ledger")
         update_ledger(inst, job.after.get(inst.package))
         job.state = "done"
         job.note("done", True)
+
+    async def _crashed(self, job: UpgradeJob, inst: Install, manifest: dict[str, Any], e: BaseException) -> None:
+        """A step raised. Say WHERE, then look at the service before calling
+        the job failed.
+
+        19 Oct 2026, the nuc: a hippocampus upgrade ended 'failed:
+        PermissionError: [Errno 1] Operation not permitted' with no restart
+        note, nothing rolled back, while systemd showed the new version up
+        since just after the install. The record could not say what hit
+        EPERM, and it said failed about a service that was fine. So: the
+        crash note names the step that was running and the frames that
+        raised; and when the install had finished and the service is running
+        on it (it came up AFTER pip finished, and answers its health check),
+        the job is done with a warning, the ledger told, and nothing rolled
+        back. A service still on the old process, or not answering, keeps
+        the job failed - and, as before, nothing is rolled back from a crash:
+        the record says so, so the next step is a human's, with the facts.
+        """
+        frames = [f"{Path(f.filename).name}:{f.lineno} in {f.name}" for f in traceback.extract_tb(e.__traceback__)[-4:]]
+        where = frames[-1] if frames else "?"
+        crashed = f"{type(e).__name__}: {e}"
+        step = job.step or "start"
+        look: dict[str, Any] = {}
+        if job.installed_at is not None and job.after.get(inst.package) and not job.self_upgrade:
+            look = await self._look(manifest, since=job.installed_at)
+        job.note("crash", False, during=step, where=where, frames=frames, error=crashed,
+                 **({"service": look} if look else {}))
+        if look.get("on_new_version"):
+            job.warning = (f"{crashed} in {where} (step {step}); the service came up after the install and answers "
+                           f"its health check, so the upgrade stands")
+            job.error = None
+            if step in ("put_back", "ledger"):
+                job.warning += "; the config may not have been put back - compare it with the copy held in the job"
+            update_ledger(inst, job.after.get(inst.package))
+            job.state = "done"
+            job.note("done", True, after_crash=True)
+            return
+        job.error = f"{crashed} in {where} (step {step}); nothing was rolled back"
+        if look:
+            job.error += (": the service is running on the old process" if look.get("running") and not look.get("restarted")
+                          else ": the service is not answering" if not look.get("healthy") else "")
+        job.state = "failed"
+
+    @staticmethod
+    async def _look(manifest: dict[str, Any], since: float) -> dict[str, Any]:
+        """What the service is doing now: running, since when (restarted =
+        its uptime starts after `since`, so it is the new version), and
+        whether it answers its health check. `restarted` is None when the
+        platform gives no uptime (Windows), and then on_new_version follows
+        health alone with `uptime_unknown` set, so the record says how much
+        it knows."""
+        st = await lifecycle.status(manifest)
+        running = bool(st.get("running"))
+        up = st.get("uptime_seconds")
+        restarted = None if up is None else (time.time() - float(up)) >= since
+        healthy = running and (await wait_healthy(manifest, HEALTH_POLL_S))
+        out = {"running": running, "uptime_seconds": up, "restarted": restarted, "healthy": healthy,
+               "on_new_version": healthy and (restarted if restarted is not None else True)}
+        if restarted is None:
+            out["uptime_unknown"] = True
+        return out
 
     async def _roll_back(self, job: UpgradeJob, inst: Install, manifest: dict[str, Any],
                          restart: bool, reason: str) -> None:
@@ -937,9 +1023,7 @@ def update_ledger(inst: Install, version: Optional[str]) -> None:
         rec = json.loads(p.read_text(encoding="utf-8"))
         rec["version"] = version
         rec["upgraded_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, p)
+        write_json(p, rec, newline=True)
     except (OSError, ValueError) as e:
         log.info("could not update the ledger %s: %s", p, e)
 

@@ -94,6 +94,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from seren_sinew.atomic import write_json
+
 # The roster's location is resolved at CALL time, never frozen at import - the
 # same shape as auth.resolve_secrets_path. Starwright
 # installs under a root (~/seren/<install>/...), and two named installs on one
@@ -384,9 +386,5 @@ def set_orchestrated(name: str, flag: bool) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     data["orchestrated"] = bool(flag)
-    tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-    os.replace(tmp, path)
+    write_json(path, data, newline=True)
     return data

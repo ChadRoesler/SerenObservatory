@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 
 from seren_meninges.updates import updates_payload
 
-from . import __version__, lifecycle, manifests
+from . import __version__, lifecycle, manifests, winproc
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 
@@ -102,6 +102,11 @@ async def node_info(request: Request) -> dict[str, Any]:
             runtime["uptime_seconds"] = int(float(f.read().split()[0]))
     except OSError:
         pass
+    if not runtime:
+        # No /proc: a Windows box. The same numbers off Win32 (winproc), so
+        # the desktop's card shows memory and uptime like a node's. There is
+        # no load average on Windows; the key is left out, not faked.
+        runtime = await asyncio.to_thread(winproc.system_runtime)
 
     clips = await _carabiners_here(request, str((n or {}).get("hostname") or "") or None)
     return {"manifest": n, "runtime": runtime, "carabiners": clips["carabiners"]}
@@ -451,8 +456,17 @@ async def reboot(body: dict | None = None) -> dict[str, Any]:
 
     # `shutdown -r +0` and `shutdown -r now` both mean "immediate" but the
     # +N form is what we use for non-zero delays - keep one code path.
-    when_arg = "now" if delay == 0 else f"+{delay}"
-    cmd = ["sudo", "-n", "/sbin/shutdown", "-r", when_arg]
+    # Windows has its own shutdown.exe: /r restarts, /t takes seconds, and
+    # the same one-minute window applies (shutdown /a cancels it). The
+    # account needs the shutdown privilege, which an interactive user has.
+    if os.name == "nt":
+        when_arg = str(delay * 60)
+        cmd = ["shutdown", "/r", "/t", when_arg, "/c", "Seren Observatory: reboot asked for from Lodestar"]
+        method = f"shutdown /r /t {when_arg}"
+    else:
+        when_arg = "now" if delay == 0 else f"+{delay}"
+        cmd = ["sudo", "-n", "/sbin/shutdown", "-r", when_arg]
+        method = f"shutdown -r {when_arg}"
 
     # Run non-interactively (`-n`) - if sudoers isn't configured, fail
     # fast rather than hang on a password prompt.
@@ -471,16 +485,27 @@ async def reboot(body: dict | None = None) -> dict[str, Any]:
             "error": "shutdown command timed out (5s) - sudoers may not be configured",
             "command": shlex.join(cmd),
         }
+    except FileNotFoundError:
+        # No sudo / no shutdown on PATH: an answer, not a 500 (a 500 reads
+        # as "the node did not answer" from the head).
+        return {
+            "scheduled": False,
+            "error": f"{cmd[0]} is not on this box's PATH; the Observatory cannot schedule a reboot here",
+            "command": shlex.join(cmd),
+        }
 
     if result.returncode != 0:
         return {
             "scheduled": False,
-            "error": result.stderr.strip() or f"shutdown exited {result.returncode}",
+            "error": result.stderr.strip() or result.stdout.strip() or f"shutdown exited {result.returncode}",
             "command": shlex.join(cmd),
             "hint": (
                 "If stderr mentions 'a password is required', the observatory's "
                 "sudoers file is missing the /sbin/shutdown grant. Re-run "
                 "`seren-prepare-node.sh --prep` on this node (Starwright) to rewrite it."
+                if os.name != "nt" else
+                "shutdown.exe refused: the service's account needs the shut-down privilege "
+                "(SeShutdownPrivilege), which the installer's own account has and LocalSystem has."
             ),
         }
 
@@ -495,7 +520,7 @@ async def reboot(body: dict | None = None) -> dict[str, Any]:
         "scheduled": True,
         "scheduled_at": scheduled_at,
         "delay_minutes": delay,
-        "method": f"shutdown -r {when_arg}",
+        "method": method,
     }
 
 
@@ -517,7 +542,7 @@ async def reboot_cancel() -> dict[str, Any]:
     import shlex
     import subprocess
 
-    cmd = ["sudo", "-n", "/sbin/shutdown", "-c"]
+    cmd = ["shutdown", "/a"] if os.name == "nt" else ["sudo", "-n", "/sbin/shutdown", "-c"]
     try:
         result = subprocess.run(
             cmd,
@@ -529,6 +554,12 @@ async def reboot_cancel() -> dict[str, Any]:
         return {
             "cancelled": False,
             "error": "shutdown -c timed out - sudoers may not be configured",
+            "command": shlex.join(cmd),
+        }
+    except FileNotFoundError:
+        return {
+            "cancelled": False,
+            "error": f"{cmd[0]} is not on this box's PATH",
             "command": shlex.join(cmd),
         }
 

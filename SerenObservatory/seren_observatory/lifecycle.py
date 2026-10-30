@@ -650,15 +650,33 @@ def _systemd_stop(manifest: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _systemd_restart(manifest: dict[str, Any]) -> dict[str, Any]:
+def _systemd_restart(manifest: dict[str, Any], no_block: bool = False) -> dict[str, Any]:
     """systemctl restart handles port release internally - it waits for
     the unit to be inactive before starting the new one. No need for
     the port-poll dance we do for pid_file services.
+
+    no_block: queue the restart and return at once (`systemctl --no-block`).
+    FOR THIS SERVICE RESTARTING ITSELF. A blocking restart of our own unit
+    is a child of this process, inside this unit's cgroup: systemd's stop
+    sends SIGTERM to the whole cgroup, so the systemctl that asked for the
+    restart is killed with us and comes back -15 with nothing on stderr.
+    The caller read that as 'restart refused' and rolled a good upgrade
+    back (the nuc, 29 Oct 2026, job 20261029-014652-4301fd), and the old
+    version came up. Queued, systemctl returns 0 before the stop begins.
     """
     unit = _systemd_unit_name(manifest)
     if not unit:
         return {"ok": False, "error": "manifest missing systemd_unit"}
-    return _systemd_run(["systemctl", "restart", unit])
+    argv = ["systemctl", "restart", unit]
+    # Through the node's sudo helper (seren-systemctl: one verb, one unit,
+    # nothing else) the flag cannot be passed. It is not needed there either:
+    # the units the node installer writes run with KillMode=process, so the
+    # stop reaches only the main process and the asking systemctl lives to
+    # return. The service core's units (a box like the nuc) have no KillMode,
+    # so there the whole cgroup is stopped and the flag is what saves it.
+    if no_block and not os.path.exists(SEREN_SYSTEMCTL):
+        argv.insert(1, "--no-block")
+    return _systemd_run(argv)
 
 
 async def _systemd_status(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -1652,7 +1670,7 @@ def _stop_sync(manifest: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "error": f"unknown service_type: {stype}"}
 
 
-def _restart_sync(manifest: dict[str, Any]) -> dict[str, Any]:
+def _restart_sync(manifest: dict[str, Any], detach: bool = False) -> dict[str, Any]:
     """pid_file uses the port-release dance to fix the historical
     'stop fires but new process can't bind' bug. systemd and
     docker_compose use their native restart commands which handle
@@ -1706,7 +1724,7 @@ def _restart_sync(manifest: dict[str, Any]) -> dict[str, Any]:
         }
 
     if stype == "library":        return _library_unsupported_op("restart")
-    if stype == "systemd":        return _systemd_restart(manifest)
+    if stype == "systemd":        return _systemd_restart(manifest, no_block=detach)
     if stype == "windows_service": return _windows_restart(manifest)
     if stype == "docker_compose": return _docker_restart(manifest)
     if stype == "launcher":       return _launcher_restart(manifest)
@@ -1723,8 +1741,13 @@ async def stop(manifest: dict[str, Any]) -> dict[str, Any]:
         return await asyncio.to_thread(_stop_sync, manifest)
 
 
-async def restart(manifest: dict[str, Any]) -> dict[str, Any]:
+async def restart(manifest: dict[str, Any], detach: bool = False) -> dict[str, Any]:
+    """detach: this service restarting ITSELF under systemd - the restart is
+    queued and the answer comes back before the stop reaches us (see
+    _systemd_restart). Other service types ignore it."""
     async with _lock_for(manifest):
+        if detach:
+            return await asyncio.to_thread(_restart_sync, manifest, True)
         return await asyncio.to_thread(_restart_sync, manifest)
 
 

@@ -91,7 +91,14 @@ async def post_restart(name: str):
     handed = await restart_self_via_nssm(m)
     if handed is not None:
         return handed
-    return await lifecycle.restart(m)
+    # Itself, under systemd: queue the restart and answer; a blocking one is
+    # killed by the stop it asks for (lifecycle._systemd_restart).
+    from .system_routes import _is_an_observatory
+    me = _is_an_observatory(m) and manifests.service_type(m) == "systemd"
+    res = await (lifecycle.restart(m, detach=True) if me else lifecycle.restart(m))
+    if me and res.get("ok"):
+        res = {**res, "handed_to": "systemd", "note": "the restart is queued; this process ends when it begins"}
+    return res
 
 
 @router.get("/{name}/health")

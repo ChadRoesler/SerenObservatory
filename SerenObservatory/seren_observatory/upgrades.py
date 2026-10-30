@@ -842,14 +842,26 @@ class Upgrader:
             job.state = "restarting"
             job.note("restart", True, handed_to="systemd")
             save(job)
-            res = await lifecycle.restart(manifest)   # ends this process; the next one closes the job
-            # Still here: systemd would not take the restart (no sudoers grant,
-            # no unit). The old code is still running, so put the old packages
-            # back rather than leave a new install nothing has started.
+            # Queued, not awaited (detach): a blocking restart of our own unit
+            # is killed by the stop it asked for, since it runs inside this
+            # cgroup, and came back -15 with nothing to say (the nuc, 29 Oct
+            # 2026); the job read that as refused and rolled a good install
+            # back. systemd ends this process shortly; the next one closes
+            # the job.
+            res = await lifecycle.restart(manifest, detach=True)
+            # Still here with a refusal: systemd would not take the restart
+            # (no sudoers grant, no unit). The old code is still running, so
+            # put the old packages back rather than leave a new install
+            # nothing has started.
             if not res.get("ok", False):
-                job.note("restart", False, error=res.get("error") or res.get("stderr") or "restart refused")
+                rc = res.get("exit_code")
+                why = (res.get("error") or res.get("stderr")
+                       or (f"systemctl was killed by the stop it asked for (exit {rc}): the restart ran inside "
+                           f"this service's own cgroup" if rc == -15 else
+                           f"systemctl exited {rc} with nothing on stderr" if rc is not None else "restart refused"))
+                job.note("restart", False, error=why, exit_code=rc)
                 await self._roll_back(job, inst, manifest, restart=False,
-                                      reason="systemd would not restart the Observatory")
+                                      reason="systemd would not restart the Observatory: " + why)
             return
         job.at("restart")
         res = await (lifecycle.start(manifest) if windows else lifecycle.restart(manifest))

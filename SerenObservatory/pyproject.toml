@@ -41,7 +41,7 @@ dependencies = [
 	# replacing the per-service request_log.py. env_prefix preserves
 	# Observatory's SEREN_AGENT_LOG_* contract; service_name resolves the
 	# log filename (-> observatory-requests.log).
-	"seren-sinew>=5.4.0,<6",  # 5.4.0: seren_sinew.cluster, the wire's DTOs this service's contract test parses its own answers with; 5.3.0: request ids carried to the next hop (request_id_hooks / request_id_scope), seren_sinew.atomic; 1.11.0: seren_sinew.orchestration (ensure); 1.8.0: seren_sinew.stores with snapshot archives (the tests stand a service up with it)
+	"seren-sinew>=5.4.0,<6",  # 5.4.0: KbhRunner.clip / unclip (a carabiner's first file, and taking one off); seren_sinew.cluster, the wire's DTOs this service's contract test parses its own answers with; 5.3.0: request ids carried to the next hop (request_id_hooks / request_id_scope), seren_sinew.atomic; 1.11.0: seren_sinew.orchestration (ensure); 1.8.0: seren_sinew.stores with snapshot archives (the tests stand a service up with it)
 ]
 
 [project.optional-dependencies]

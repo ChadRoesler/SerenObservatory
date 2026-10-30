@@ -8,6 +8,10 @@ The carabiners clipped on this box, for Lodestar's Rack
     GET  /api/v1/carabiner/{name}/belay           does it still hold
     POST /api/v1/carabiner/{name}/upgrade         UpgradeRequest -> UpgradeResult: a new .kbh, sent
                                                   by Lodestar, checked and swapped in by kbh itself
+    POST /api/v1/carabiner/{name}/clip            UpgradeRequest -> UpgradeResult: a carabiner's FIRST
+                                                  file here, checked and written; nothing of it runs
+    POST /api/v1/carabiner/{name}/unclip          {"reason"} -> UnclipResult: the .kbh kept beside
+                                                  itself, the yaml left, nothing unregistered
 
 The Observatory carries; the carabiner decides. Each call runs the .kbh AS
 the person whose yaml it is and passes on what it answered: which settings
@@ -98,3 +102,24 @@ async def upgrade_carabiner(name: str, request: Request, body: dict | None = Non
         return refused
     req = UpgradeRequest.from_dict(body)
     return _answer(await asyncio.to_thread(request.app.state.kbh.upgrade, name, req))
+
+
+@router.post("/carabiner/{name}/clip")
+async def clip_carabiner(name: str, request: Request, body: dict | None = None):
+    """A carabiner's first file on this box, sent by Lodestar from its shelf
+    (29 Oct 2026). The hash is checked and the file written; nothing of it
+    runs. One already here is an upgrade, and the answer says so."""
+    if (refused := _gate(request)) is not None:
+        return refused
+    req = UpgradeRequest.from_dict(body)
+    return _answer(await asyncio.to_thread(request.app.state.kbh.clip, name, req))
+
+
+@router.post("/carabiner/{name}/unclip")
+async def unclip_carabiner(name: str, request: Request, body: dict | None = None):
+    """Off the Rack: the .kbh kept beside itself, the yaml left for a re-clip,
+    what it registered in its harness untouched (the answer's note)."""
+    if (refused := _gate(request)) is not None:
+        return refused
+    reason = str((body or {}).get("reason") or "") if isinstance(body, dict) else ""
+    return _answer(await asyncio.to_thread(request.app.state.kbh.unclip, name, reason))

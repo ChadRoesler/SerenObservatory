@@ -98,8 +98,9 @@ class FakeBox:
         return [a for a in self.pip_calls if "--upgrade" in a and "--dry-run" not in a]
         raise AssertionError(f"unexpected command {argv}")
 
-    async def restart(self, manifest):
+    async def restart(self, manifest, detach=False):
         self.restarts += 1
+        self.detached = detach
         if self.on_restart:
             self.on_restart()
         return {"ok": True}

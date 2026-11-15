@@ -23,17 +23,18 @@ def _manifest(fake_home) -> None:
     (fake_home / ".seren" / "secrets.json").write_text(json.dumps({"observatory_token": "tok"}))
 
 
-def _server(seen: dict, status=200):
+def _server(seen: dict, status=200, cards=("ada", "ada-drama")):
     def handle(request: httpx.Request) -> httpx.Response:
         seen.update(url=str(request.url), body=request.read())
+        seen.setdefault("paths", []).append(request.url.path)
         if request.url.path == "/voices":
-            return httpx.Response(200, json={"voices": [{"name": "wren", "backend": "qwen3tts", "language": "English",
-                                                         "ref_seconds": 19.7}]})
+            return httpx.Response(200, json={"voices": [{"name": n, "backend": "qwen3tts", "language": "English",
+                                                         "ref_seconds": 19.7} for n in cards]})
         if status == 503:
             return httpx.Response(503, json={"detail": "still loading"})
         if status != 200:
-            return httpx.Response(status, json={"detail": "no voice 'bob'; I have ['wren']"})
-        return httpx.Response(200, content=WAV, headers={"content-type": "audio/wav", "X-Seren-Voice": "wren",
+            return httpx.Response(status, json={"detail": "no voice 'bob'; I have ['ada']"})
+        return httpx.Response(200, content=WAV, headers={"content-type": "audio/wav", "X-Seren-Voice": "ada",
                                                          "X-Seren-Backend": "qwen3tts", "X-Seren-Seconds": "4.1",
                                                          "X-Seren-Clip-Seconds": "4.9", "X-Seren-Chunks": "1"})
     return httpx.MockTransport(handle)
@@ -52,11 +53,27 @@ async def test_words_reach_the_speaker_and_its_voice_comes_back_as_a_wav(fake_ho
         r = await c.post("/api/v1/service/speaker/speak", json={"text": "Hi, it's me."})
     assert r.status_code == 200, r.text
     assert r.content == WAV and r.headers["content-type"].startswith("audio/wav")
-    assert r.headers["x-seren-voice"] == "wren" and r.headers["x-seren-backend"] == "qwen3tts"
+    assert r.headers["x-seren-voice"] == "ada" and r.headers["x-seren-backend"] == "qwen3tts"
     assert r.headers["x-seren-clip-seconds"] == "4.9" and r.headers["x-seren-model"] == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     assert r.headers.get_list("x-seren-seconds") == ["4.1"], "the speaker's own timing, once - not beside a default"
     assert seen["url"] == "http://127.0.0.1:8087/speak"
-    assert json.loads(seen["body"]) == {"text": "Hi, it's me.", "voice": "wren"}
+    assert json.loads(seen["body"]) == {"text": "Hi, it's me.", "voice": "ada"}, \
+        "no voice was asked for: the first one the speaker lists, whatever it is called on this box"
+    assert seen["paths"] == ["/voices", "/speak"]
+
+
+async def test_a_voice_asked_for_by_name_is_not_looked_up_and_no_voices_listed_sends_none(fake_home, monkeypatch):
+    _manifest(fake_home)
+    seen: dict = {}
+    monkeypatch.setattr(speaker, "TRANSPORT", _server(seen))
+    async with await _client(fake_home) as c:
+        assert (await c.post("/api/v1/service/speaker/speak", json={"text": "hi", "voice": "ada-drama"})).status_code == 200
+    assert seen["paths"] == ["/speak"] and json.loads(seen["body"]) == {"text": "hi", "voice": "ada-drama"}
+    seen = {}
+    monkeypatch.setattr(speaker, "TRANSPORT", _server(seen, cards=()))
+    async with await _client(fake_home) as c:
+        assert (await c.post("/api/v1/service/speaker/speak", json={"text": "hi"})).status_code == 200
+    assert json.loads(seen["body"]) == {"text": "hi"}, "a speaker with no cards to list is asked plainly, and answers for itself"
 
 
 async def test_the_voices_are_listed(fake_home, monkeypatch):
@@ -64,7 +81,7 @@ async def test_the_voices_are_listed(fake_home, monkeypatch):
     monkeypatch.setattr(speaker, "TRANSPORT", _server({}))
     async with await _client(fake_home) as c:
         r = await c.get("/api/v1/service/speaker/voices")
-    assert r.status_code == 200 and r.json()["voices"][0]["name"] == "wren"
+    assert r.status_code == 200 and r.json()["voices"][0]["name"] == "ada"
     assert r.json()["model"] == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
 

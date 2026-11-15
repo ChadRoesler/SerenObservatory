@@ -10,6 +10,9 @@ with a name from a list; the speaker says it in the voice that was chosen.
 
 Endpoints:
     POST /speak        JSON {text, voice?, timeout_seconds?}
+                       voice: one of the speaker's cards by name; with none,
+                       the first one it lists (whose voice that is belongs to
+                       whoever set the speaker up: no name is written here)
                        -> audio/wav, with X-Seren-Voice, X-Seren-Backend,
                           X-Seren-Seconds (to make it), X-Seren-Clip-Seconds
                        | JSON {ok: false, error, detail} with 503 (loading,
@@ -42,7 +45,7 @@ TRANSPORT: httpx.AsyncBaseTransport | None = None
 
 class SpeakBody(BaseModel):
     text: str
-    voice: str = "wren"
+    voice: str = ""
     timeout_seconds: float = SPEAK_DEFAULT_TIMEOUT
 
 
@@ -59,7 +62,7 @@ async def say(port: int, text: str, voice: str, timeout: float,
     client = client or httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=timeout, transport=TRANSPORT)
     t0 = time.monotonic()
     try:
-        r = await client.post("/speak", json={"text": text, "voice": voice})
+        r = await client.post("/speak", json={"text": text, **({"voice": voice} if voice else {})})
         if r.status_code == 200 and r.content.startswith(b"RIFF"):
             # httpx lowercases header names; keep them lowercase here too, or
             # the default below sits beside the speaker's own and the caller
@@ -98,6 +101,15 @@ async def voices(port: int, client: httpx.AsyncClient | None = None) -> dict[str
             await client.aclose()
 
 
+async def first_voice(port: int) -> str:
+    """The first voice the speaker lists, or "" when it lists none or does
+    not answer (the speaker is then asked with no voice, and says why)."""
+    listed = await voices(port)
+    cards = listed.get("voices") if listed.get("ok") else None
+    first = cards[0] if isinstance(cards, list) and cards else None
+    return str(first.get("name") or "")[:64] if isinstance(first, dict) else ""
+
+
 def register(router: APIRouter) -> None:
     @router.post("/speak")
     async def speak_route(body: SpeakBody):
@@ -109,8 +121,9 @@ def register(router: APIRouter) -> None:
             raise HTTPException(400, "send `text` to say")
         if len(text) > MAX_TEXT_CHARS:
             raise HTTPException(413, f"that is {len(text)} characters; at most {MAX_TEXT_CHARS} in one go")
-        status, out, headers = await say(int(m.get("port") or 8087), text, (body.voice or "wren").strip()[:64],
-                                         _timeout(body.timeout_seconds))
+        port = int(m.get("port") or 8087)
+        voice = (body.voice or "").strip()[:64] or await first_voice(port)
+        status, out, headers = await say(port, text, voice, _timeout(body.timeout_seconds))
         if status != 200:
             return JSONResponse(out, status_code=status)
         headers["x-seren-model"] = str((m.get("serviceSpecific") or {}).get("model") or "")
